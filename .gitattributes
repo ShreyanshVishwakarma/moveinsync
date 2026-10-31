@@ -1,0 +1,13 @@
+# Normalise text files to LF in the repository so the build is identical on Linux, macOS
+# and Windows. Shell scripts must never be checked out with CRLF.
+* text=auto
+*.java text eol=lf
+*.xml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.sh text eol=lf
+mvnw text eol=lf
+*.cmd text eol=crlf
+Dockerfile text eol=lf
