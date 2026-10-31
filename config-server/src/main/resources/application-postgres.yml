@@ -1,0 +1,12 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/configdb}
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USER:config}
+    password: ${DB_PASSWORD:config}
+    hikari:
+      maximum-pool-size: 10
+  jpa:
+    hibernate:
+      # Demo-friendly; use Flyway/Liquibase migrations in production.
+      ddl-auto: update

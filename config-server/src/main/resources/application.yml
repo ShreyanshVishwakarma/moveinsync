@@ -1,0 +1,56 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: moveinsync-config-server
+  datasource:
+    url: jdbc:h2:mem:configdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  lifecycle:
+    timeout-per-shutdown-phase: 10s
+
+# Tunables for the configuration engine. All overridable via environment variables.
+moveinsync:
+  config:
+    # Async disk snapshot write is a client-SDK concern; the server only serves what clients need.
+    delta-retention-versions: 1000
+    max-batch-size: 200
+    websocket:
+      path: /ws/config
+      # Used by the reconnect-storm story: broadcast fan-out is bounded.
+      send-timeout-ms: 5000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+  level:
+    com.moveinsync.config: INFO

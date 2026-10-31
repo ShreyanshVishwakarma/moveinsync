@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: moveinsync-postgres
+    environment:
+      POSTGRES_DB: configdb
+      POSTGRES_USER: config
+      POSTGRES_PASSWORD: config
+    ports:
+      - "5432:5432"
+    volumes:
+      - config_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U config -d configdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  config-server:
+    build: .
+    container_name: moveinsync-config-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      DB_URL: jdbc:postgresql://postgres:5432/configdb
+      DB_USER: config
+      DB_PASSWORD: config
+    ports:
+      - "8080:8080"
+
+volumes:
+  config_pgdata:
