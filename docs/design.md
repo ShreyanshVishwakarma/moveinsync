@@ -251,7 +251,7 @@ normal delta path and rollback still works. `promoted_from_version` records the 
 
 | Measurement | Result |
 | --- | --- |
-| Local resolve, 200 definitions / 250 000 overrides | 19.1–19.3 M ops/sec, p50 100 ns, p99 200 ns |
+| Local resolve, 200 definitions / 250 000 overrides | 18.3–19.3 M ops/sec, p50 100 ns, p99 200–300 ns |
 | Push to 200 live SDKs (polling disabled) | p50 271 ms, p99 274 ms, 200/200 within 5 s |
 | Server killed after a commit | Reads continue from memory; change survives restart; client reconnects at the same version |
 

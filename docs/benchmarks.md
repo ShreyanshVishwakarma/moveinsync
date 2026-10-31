@@ -31,9 +31,11 @@ latency (n=500000, includes nanoTime overhead)
   max          : 46.70 us
 ```
 
-A second run produced 19 013 981 resolves/sec with p99.9 at 400 ns. The per-operation
-measurement adds roughly 20–30 ns of `System.nanoTime()` overhead, so the reported latency is
-an upper bound. Throughput is measured without per-op timing (one loop around 10 M resolves).
+A second run produced 19 013 981 resolves/sec with p99.9 at 400 ns, and a third produced
+18 321 548 resolves/sec with p99 at 300 ns. Across runs the read path sits at **18.3–19.3 M
+resolves/sec**, p50 100 ns, p99 200–300 ns. The per-operation measurement adds roughly
+20–30 ns of `System.nanoTime()` overhead, so the reported latency is an upper bound.
+Throughput is measured without per-op timing (one loop around 10 M resolves).
 
 **Why it is fast:** three hash lookups (`SHIFT`, `OFFICE`, `CLIENT`), one definition lookup
 for the global default, and no locks, I/O or allocation beyond the small result record.
@@ -47,7 +49,8 @@ poll interval. Polling is therefore not what delivers the update; only the push 
 
 ```bash
 # terminal 1
-./mvnw -pl config-server -am spring-boot:run
+./mvnw -DskipTests package
+java -jar config-server/target/config-server-0.1.0-SNAPSHOT.jar
 
 # terminal 2
 java -jar config-benchmarks/target/config-benchmarks-0.1.0-SNAPSHOT-jar-with-dependencies.jar \

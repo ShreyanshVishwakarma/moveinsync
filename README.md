@@ -43,8 +43,15 @@ The core algorithm is plain Java and tested without a web server or database: th
 Prerequisites: **JDK 21**. Maven is not required — the wrapper is included.
 
 ```bash
-# control plane on http://localhost:8080 (H2 in memory, demo tenant seeded)
-./mvnw -pl config-server -am spring-boot:run
+# build once, then run the packaged jar (works from a fresh clone)
+./mvnw -DskipTests package
+java -jar config-server/target/config-server-0.1.0-SNAPSHOT.jar
+```
+
+On Windows the helper script does both steps:
+
+```powershell
+pwsh ./scripts/run-server.ps1
 ```
 
 Demo API keys are seeded in the default profile (production keys are random and issued once):
@@ -102,8 +109,8 @@ Machine: **Windows 11, Intel Core i5-12500H (12 cores / 16 threads), 15.6 GB RAM
 
 | Measurement | Result |
 | --- | --- |
-| Local resolve throughput (200 definitions, 250 000 overrides) | **19.1–19.3 M resolves/sec** |
-| Local resolve latency | **p50 100 ns, p99 200 ns, p99.9 0.4–1.2 µs** |
+| Local resolve throughput (200 definitions, 250 000 overrides) | **18.3–19.3 M resolves/sec** |
+| Local resolve latency | **p50 100 ns, p99 200–300 ns, p99.9 0.4–1.4 µs** |
 | Propagation to 200 live SDKs (poll disabled) | **p50 271 ms, p99 274 ms, max 274 ms; 200/200 within 5 s** |
 | Change commit HTTP round trip (cold JIT) | 155 ms |
 | Kill-the-server test | reads continued from memory; published change survived restart and the client reconnected at the same version |
@@ -541,9 +548,11 @@ config-sdk/src/main/java/com/moveinsync/config/sdk/
 └── Wire.java / WireCodec.java      JSON contract
 
 config-benchmarks/                  read + propagation harnesses, kill-test probe
+scripts/run-server.ps1              build + run helper
 scripts/kill-server-test.ps1        automated crash/restart proof
 ```
 
-See [`docs/design.md`](docs/design.md) for the architecture and sequence diagrams,
+See [`docs/demo.md`](docs/demo.md) for the interview walkthrough,
+[`docs/design.md`](docs/design.md) for the architecture and sequence diagrams,
 [`docs/sdk.md`](docs/sdk.md) for the SDK lifecycle, and
 [`docs/benchmarks.md`](docs/benchmarks.md) for methodology and raw output.
