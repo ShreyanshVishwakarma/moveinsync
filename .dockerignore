@@ -1,0 +1,7 @@
+target/
+.git/
+.idea/
+.vscode/
+test-data/
+config_cache.json
+*.log

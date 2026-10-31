@@ -3,9 +3,11 @@ FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /workspace
 
 # POMs first so dependency resolution is cached independently of source changes.
+# Every module listed in the parent POM must be present, even if it is not built.
 COPY pom.xml .
 COPY config-sdk/pom.xml config-sdk/
 COPY config-server/pom.xml config-server/
+COPY config-benchmarks/pom.xml config-benchmarks/
 RUN mvn -q -B -pl config-server -am -DskipTests dependency:go-offline
 
 COPY config-sdk/src config-sdk/src
