@@ -10,6 +10,7 @@ import com.moveinsync.config.dto.RollbackRequest;
 import com.moveinsync.config.dto.RollbackResponse;
 import com.moveinsync.config.exception.ApiException;
 import com.moveinsync.config.metrics.ConfigMetrics;
+import com.moveinsync.config.security.Actor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -27,6 +29,8 @@ import java.util.Set;
  * <p>Rewriting history in place would break every client that already applied newer
  * versions, so a rollback computes the delta back to the target state and publishes it
  * with the next version number. Clients converge through the normal delta path.
+ *
+ * <p>Non-admin operators only see and revert their own tenant's overrides.
  */
 @Service
 public class RollbackService {
@@ -49,6 +53,10 @@ public class RollbackService {
     }
 
     public RollbackResponse rollback(RollbackRequest request) {
+        return rollback(request, Actor.system());
+    }
+
+    public RollbackResponse rollback(RollbackRequest request, Actor actor) {
         return commitGate.withLock(() -> {
             long target = request.targetVersion();
             long currentVersion = queryService.currentVersion();
@@ -56,8 +64,8 @@ public class RollbackService {
                 throw ApiException.notFound("Version", String.valueOf(target));
             }
 
-            Map<OverrideScope, String> targetState = queryService.stateAt(target);
-            Map<OverrideScope, String> currentState = queryService.currentState();
+            Map<OverrideScope, String> targetState = visible(queryService.stateAt(target), actor);
+            Map<OverrideScope, String> currentState = visible(queryService.currentState(), actor);
 
             Set<OverrideScope> scopes = new LinkedHashSet<>();
             scopes.addAll(currentState.keySet());
@@ -69,18 +77,20 @@ public class RollbackService {
             for (OverrideScope scope : scopes) {
                 String currentValue = currentState.get(scope);
                 String targetValue = targetState.get(scope);
-                if (java.util.Objects.equals(currentValue, targetValue)) {
+                if (Objects.equals(currentValue, targetValue)) {
                     continue;
                 }
                 diff.add(new ChangeEntryResponse(
                         scope.key(),
                         scope.level(),
                         scope.entityId(),
+                        scope.clientId(),
                         currentValue,
                         targetValue,
                         targetValue == null ? ChangeAction.DELETE : ChangeAction.UPSERT
                 ));
-                changes.add(new OverrideChange(scope.key(), scope.level(), scope.entityId(), targetValue));
+                changes.add(new OverrideChange(
+                        scope.key(), scope.level(), scope.entityId(), targetValue, scope.clientId()));
             }
 
             if (diff.isEmpty()) {
@@ -95,9 +105,10 @@ public class RollbackService {
                     "Rollback to v" + target + ": " + request.reason(),
                     changes
             );
-            ChangeSetResponse published = changeService.commit(commitRequest, target);
+            ChangeSetResponse published = changeService.commitRollback(commitRequest, actor, target);
             metrics.recordRollback();
-            log.info("Rollback published target={} newVersion={} changes={}", target, published.version(), changes.size());
+            log.info("Rollback published target={} newVersion={} changes={}",
+                    target, published.version(), changes.size());
 
             return new RollbackResponse(target, published.version(), false, diff);
         });
@@ -105,8 +116,12 @@ public class RollbackService {
 
     /** Diff preview without publishing; used by the API for confirmation screens. */
     public List<ChangeEntryResponse> preview(long targetVersion) {
-        Map<OverrideScope, String> targetState = queryService.stateAt(targetVersion);
-        Map<OverrideScope, String> currentState = queryService.currentState();
+        return preview(targetVersion, Actor.system());
+    }
+
+    public List<ChangeEntryResponse> preview(long targetVersion, Actor actor) {
+        Map<OverrideScope, String> targetState = visible(queryService.stateAt(targetVersion), actor);
+        Map<OverrideScope, String> currentState = visible(queryService.currentState(), actor);
         Map<OverrideScope, String> scopes = new LinkedHashMap<>(currentState);
         targetState.forEach(scopes::putIfAbsent);
 
@@ -114,11 +129,12 @@ public class RollbackService {
         for (OverrideScope scope : scopes.keySet()) {
             String currentValue = currentState.get(scope);
             String targetValue = targetState.get(scope);
-            if (!java.util.Objects.equals(currentValue, targetValue)) {
+            if (!Objects.equals(currentValue, targetValue)) {
                 diff.add(new ChangeEntryResponse(
                         scope.key(),
                         scope.level(),
                         scope.entityId(),
+                        scope.clientId(),
                         currentValue,
                         targetValue,
                         targetValue == null ? ChangeAction.DELETE : ChangeAction.UPSERT
@@ -126,5 +142,18 @@ public class RollbackService {
             }
         }
         return diff;
+    }
+
+    private Map<OverrideScope, String> visible(Map<OverrideScope, String> state, Actor actor) {
+        if (actor == null || actor.isAdmin()) {
+            return state;
+        }
+        Map<OverrideScope, String> filtered = new LinkedHashMap<>();
+        state.forEach((scope, value) -> {
+            if (actor.clientId() != null && actor.clientId().equals(scope.clientId())) {
+                filtered.put(scope, value);
+            }
+        });
+        return filtered;
     }
 }

@@ -9,6 +9,7 @@ public record ChangeSetResponse(
         String reason,
         Instant createdAt,
         Long revertsToVersion,
+        Long promotedFromVersion,
         List<ChangeEntryResponse> entries
 ) {
 }

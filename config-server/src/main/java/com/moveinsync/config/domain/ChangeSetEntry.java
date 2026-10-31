@@ -41,6 +41,10 @@ public class ChangeSetEntry {
     @Column(name = "entity_id", nullable = false, length = 128)
     private String entityId;
 
+    /** Tenant that owned the override at the time of the change. */
+    @Column(name = "client_id", length = 128)
+    private String clientId;
+
     @Column(name = "old_value", length = 512)
     private String oldValue;
 
@@ -59,6 +63,7 @@ public class ChangeSetEntry {
                           String configKey,
                           ConfigLevel level,
                           String entityId,
+                          String clientId,
                           String oldValue,
                           String newValue,
                           ChangeAction action) {
@@ -66,6 +71,7 @@ public class ChangeSetEntry {
         this.configKey = configKey;
         this.level = level;
         this.entityId = entityId;
+        this.clientId = clientId;
         this.oldValue = oldValue;
         this.newValue = newValue;
         this.action = action;
@@ -89,6 +95,10 @@ public class ChangeSetEntry {
 
     public String getEntityId() {
         return entityId;
+    }
+
+    public String getClientId() {
+        return clientId;
     }
 
     public String getOldValue() {

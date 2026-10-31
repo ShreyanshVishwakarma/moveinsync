@@ -8,8 +8,6 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
-
 /**
  * Bridges publication events to WebSocket fan-out.
  *
@@ -33,14 +31,8 @@ public class ConfigBroadcastListener {
     @Async("broadcastExecutor")
     @EventListener
     public void onConfigPublished(ConfigPublishedEvent event) {
-        Map<String, Object> delta = Map.of(
-                "type", "delta",
-                "version", event.version(),
-                "entries", event.entries()
-        );
-
         metrics.broadcastQueued(0);
-        int sent = handler.broadcast(delta);
+        int sent = handler.broadcast(event.version(), event.entries());
         if (sent > 0) {
             log.debug("Broadcast v{} to {} clients ({} changes)",
                     event.version(), sent, event.entries().size());

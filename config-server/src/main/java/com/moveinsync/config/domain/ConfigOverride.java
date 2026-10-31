@@ -22,11 +22,12 @@ import java.time.Instant;
         name = "config_overrides",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_override_scope",
-                columnNames = {"config_key", "level", "entity_id"}
+                columnNames = {"client_id", "config_key", "level", "entity_id"}
         ),
         indexes = {
                 @Index(name = "idx_override_level_entity", columnList = "level, entity_id"),
-                @Index(name = "idx_override_key", columnList = "config_key")
+                @Index(name = "idx_override_key", columnList = "config_key"),
+                @Index(name = "idx_override_client", columnList = "client_id")
         }
 )
 public class ConfigOverride {
@@ -45,6 +46,14 @@ public class ConfigOverride {
     @Column(name = "entity_id", nullable = false, length = 128)
     private String entityId;
 
+    /**
+     * Tenant that owns this override. CLIENT-level rows use the client id as the entity
+     * id as well; OFFICE/SHIFT rows need the owning client because entity ids are only
+     * unique inside a tenant.
+     */
+    @Column(name = "client_id", length = 128)
+    private String clientId;
+
     @Column(name = "config_value", nullable = false, length = 512)
     private String value;
 
@@ -59,10 +68,15 @@ public class ConfigOverride {
     }
 
     public ConfigOverride(String configKey, ConfigLevel level, String entityId, String value) {
+        this(configKey, level, entityId, value, null);
+    }
+
+    public ConfigOverride(String configKey, ConfigLevel level, String entityId, String value, String clientId) {
         this.configKey = configKey;
         this.level = level;
         this.entityId = entityId;
         this.value = value;
+        this.clientId = clientId;
     }
 
     public Long getId() {
@@ -79,6 +93,10 @@ public class ConfigOverride {
 
     public String getEntityId() {
         return entityId;
+    }
+
+    public String getClientId() {
+        return clientId;
     }
 
     public String getValue() {

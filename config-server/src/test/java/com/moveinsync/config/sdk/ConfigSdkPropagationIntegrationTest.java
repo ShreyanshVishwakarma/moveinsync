@@ -49,6 +49,7 @@ class ConfigSdkPropagationIntegrationTest {
     void aPublishedChangeReachesTheSdkInUnderFiveSeconds() throws Exception {
         try (ConfigSdk sdk = ConfigSdk.builder()
                 .baseUrl("http://127.0.0.1:" + port)
+                .apiKey(com.moveinsync.config.config.DemoDataSeeder.EMPLOYEE_KEY)
                 .clientId(CLIENT)
                 .officeId(OFFICE)
                 .cacheFile(tempDir.resolve("sdk-cache.json"))
@@ -73,7 +74,7 @@ class ConfigSdkPropagationIntegrationTest {
             changeService.commit(new CommitChangeSetRequest(
                     "sdk-integration-test",
                     "Cut-off change that must be pushed, not polled",
-                    List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "25"))
+                    List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "25", CLIENT))
             ));
 
             await("pushed delta", Duration.ofSeconds(5), () -> "25".equals(sdk.get(KEY)));

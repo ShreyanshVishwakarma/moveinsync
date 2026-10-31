@@ -17,6 +17,7 @@ import com.moveinsync.config.exception.ApiException;
 import com.moveinsync.config.metrics.ConfigMetrics;
 import com.moveinsync.config.repository.ChangeSetEntryRepository;
 import com.moveinsync.config.repository.ChangeSetRepository;
+import com.moveinsync.config.security.Actor;
 import com.moveinsync.config.snapshot.ConfigSnapshot;
 import com.moveinsync.config.snapshot.SnapshotStore;
 import org.springframework.data.domain.PageRequest;
@@ -35,6 +36,8 @@ import java.util.stream.Collectors;
 /**
  * Read path for the control plane: resolution, explain, snapshots, deltas and history.
  * All hot reads go straight to the in-memory snapshot; only history queries touch the DB.
+ *
+ * <p>Snapshot and delta responses are tenant-filtered before they leave the process.
  */
 @Service
 public class ConfigQueryService {
@@ -85,21 +88,32 @@ public class ConfigQueryService {
         );
     }
 
+    /** Platform-admin snapshot: every tenant. */
     public SnapshotResponse snapshot() {
         return SnapshotResponse.from(snapshotStore.current());
+    }
+
+    /** Snapshot scoped to the caller's tenant. */
+    public SnapshotResponse snapshot(Actor actor) {
+        return SnapshotResponse.from(snapshotStore.current(), tenantFilter(actor));
+    }
+
+    public SyncResponse sync(long sinceVersion) {
+        return sync(sinceVersion, null);
     }
 
     /**
      * Delta sync. A client that is already current gets an empty delta; a client whose
      * version is unknown or too old gets a full snapshot (bounded staleness, never a gap).
      */
-    public SyncResponse sync(long sinceVersion) {
+    public SyncResponse sync(long sinceVersion, Actor actor) {
         metrics.recordResync();
+        String tenant = tenantFilter(actor);
         ConfigSnapshot snapshot = snapshotStore.current();
         long current = snapshot.version();
 
         if (sinceVersion <= 0 || sinceVersion > current) {
-            return SyncResponse.full(SnapshotResponse.from(snapshot), sinceVersion);
+            return SyncResponse.full(SnapshotResponse.from(snapshot, tenant), sinceVersion);
         }
         if (sinceVersion == current) {
             return SyncResponse.delta(current, sinceVersion, List.of());
@@ -109,6 +123,7 @@ public class ConfigQueryService {
                 .findByChangeSetIdGreaterThanOrderByChangeSetIdAscIdAsc(sinceVersion);
 
         Map<Long, List<ChangeSetEntry>> byVersion = entries.stream()
+                .filter(entry -> tenant == null || entry.getClientId() == null || tenant.equals(entry.getClientId()))
                 .collect(Collectors.groupingBy(ChangeSetEntry::getChangeSetId, TreeMap::new, Collectors.toList()));
 
         Map<Long, ChangeSet> changeSets = changeSetRepository.findAllById(byVersion.keySet()).stream()
@@ -153,7 +168,8 @@ public class ConfigQueryService {
 
         Map<OverrideScope, String> state = new LinkedHashMap<>();
         for (ChangeSetEntry entry : history) {
-            OverrideScope scope = OverrideScope.of(entry.getConfigKey(), entry.getLevel(), entry.getEntityId());
+            OverrideScope scope = OverrideScope.of(
+                    entry.getConfigKey(), entry.getLevel(), entry.getEntityId(), entry.getClientId());
             if (entry.getNewValue() == null) {
                 state.remove(scope);
             } else {
@@ -166,13 +182,11 @@ public class ConfigQueryService {
     /** Current override state derived from the live snapshot (authoritative, no replay). */
     public Map<OverrideScope, String> currentState() {
         Map<OverrideScope, String> state = new HashMap<>();
-        snapshotStore.current().overrideIndexView().forEach((level, byEntity) -> {
-            if (level == ConfigLevel.GLOBAL) {
-                return;
-            }
-            byEntity.forEach((entityId, values) ->
-                    values.forEach((key, value) -> state.put(OverrideScope.of(key, level, entityId), value)));
-        });
+        for (ConfigSnapshot.ScopedOverride entry : snapshotStore.current().scopedEntries()) {
+            state.put(
+                    OverrideScope.of(entry.key(), entry.level(), entry.entityId(), entry.clientId()),
+                    entry.value());
+        }
         return state;
     }
 
@@ -189,5 +203,12 @@ public class ConfigQueryService {
         List<ChangeSetEntry> entries = new ArrayList<>();
         entries.addAll(entryRepository.findByChangeSetIdLessThanEqualOrderByChangeSetIdAscIdAsc(version));
         return entries;
+    }
+
+    private String tenantFilter(Actor actor) {
+        if (actor == null || actor.isAdmin()) {
+            return null;
+        }
+        return actor.clientId();
     }
 }

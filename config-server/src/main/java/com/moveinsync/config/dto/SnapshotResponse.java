@@ -1,6 +1,5 @@
 package com.moveinsync.config.dto;
 
-import com.moveinsync.config.domain.ConfigLevel;
 import com.moveinsync.config.domain.ConfigType;
 import com.moveinsync.config.snapshot.ConfigSnapshot;
 
@@ -10,11 +9,13 @@ import java.util.Map;
 /**
  * Full bootstrap payload. Clients that are too far behind (or starting cold) receive
  * this instead of a delta.
+ *
+ * <p>Instances are always tenant-filtered: a caller only ever sees overrides it owns.
  */
 public record SnapshotResponse(
         long version,
         List<Definition> definitions,
-        Map<ConfigLevel, Map<String, Map<String, String>>> overrides
+        Map<String, Map<String, Map<String, String>>> overrides
 ) {
     public record Definition(
             String key,
@@ -38,10 +39,24 @@ public record SnapshotResponse(
         }
     }
 
+    /** Platform-admin view: every tenant. */
     public static SnapshotResponse from(ConfigSnapshot snapshot) {
+        return from(snapshot, null);
+    }
+
+    /**
+     * @param clientId tenant filter, or {@code null} for every tenant
+     */
+    public static SnapshotResponse from(ConfigSnapshot snapshot, String clientId) {
         List<Definition> definitions = snapshot.definitions().values().stream()
                 .map(Definition::from)
                 .toList();
-        return new SnapshotResponse(snapshot.version(), definitions, snapshot.overrideIndexView());
+        Map<String, Map<String, Map<String, String>>> overrides = new java.util.LinkedHashMap<>();
+        snapshot.overridesFor(clientId).forEach((level, entities) -> {
+            if (!entities.isEmpty()) {
+                overrides.put(level.name(), entities);
+            }
+        });
+        return new SnapshotResponse(snapshot.version(), definitions, overrides);
     }
 }

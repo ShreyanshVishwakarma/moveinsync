@@ -3,10 +3,12 @@ package com.moveinsync.config.controller;
 import com.moveinsync.config.dto.ChangeEntryResponse;
 import com.moveinsync.config.dto.RollbackRequest;
 import com.moveinsync.config.dto.RollbackResponse;
+import com.moveinsync.config.security.Actor;
 import com.moveinsync.config.service.RollbackService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,8 +33,9 @@ public class RollbackController {
      * set. Set {@code dryRun=true} to inspect the diff first.
      */
     @PostMapping
-    public ResponseEntity<RollbackResponse> rollback(@Valid @RequestBody RollbackRequest request) {
-        RollbackResponse response = rollbackService.rollback(request);
+    public ResponseEntity<RollbackResponse> rollback(@Valid @RequestBody RollbackRequest request,
+                                                     @AuthenticationPrincipal Actor actor) {
+        RollbackResponse response = rollbackService.rollback(request, actor);
         return ResponseEntity.status(response.publishedVersion() == null
                         ? HttpStatus.OK
                         : HttpStatus.CREATED)
@@ -40,7 +43,8 @@ public class RollbackController {
     }
 
     @GetMapping("/{targetVersion}/preview")
-    public List<ChangeEntryResponse> preview(@PathVariable long targetVersion) {
-        return rollbackService.preview(targetVersion);
+    public List<ChangeEntryResponse> preview(@PathVariable long targetVersion,
+                                             @AuthenticationPrincipal Actor actor) {
+        return rollbackService.preview(targetVersion, actor);
     }
 }

@@ -21,6 +21,7 @@ public final class ChangeSetResponses {
                 entry.getConfigKey(),
                 entry.getLevel(),
                 entry.getEntityId(),
+                entry.getClientId(),
                 entry.getOldValue(),
                 entry.getNewValue(),
                 entry.getAction()
@@ -34,6 +35,7 @@ public final class ChangeSetResponses {
                 changeSet.getReason(),
                 changeSet.getCreatedAt(),
                 changeSet.getRevertsToVersion(),
+                changeSet.getPromotedFromVersion(),
                 entries.stream().map(ChangeSetResponses::toResponse).toList()
         );
     }

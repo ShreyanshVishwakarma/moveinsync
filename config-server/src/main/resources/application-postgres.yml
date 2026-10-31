@@ -10,3 +10,7 @@ spring:
     hibernate:
       # Demo-friendly; use Flyway/Liquibase migrations in production.
       ddl-auto: update
+
+moveinsync:
+  security:
+    h2-console-public: false

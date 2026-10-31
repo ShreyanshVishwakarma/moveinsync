@@ -16,17 +16,21 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 public class WebSocketConfig implements WebSocketConfigurer {
 
     private final ConfigWebSocketHandler handler;
+    private final com.moveinsync.config.security.WebSocketAuthInterceptor authInterceptor;
     private final String path;
 
     public WebSocketConfig(ConfigWebSocketHandler handler,
+                           com.moveinsync.config.security.WebSocketAuthInterceptor authInterceptor,
                            @Value("${moveinsync.config.websocket.path:/ws/config}") String path) {
         this.handler = handler;
+        this.authInterceptor = authInterceptor;
         this.path = path;
     }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(handler, path)
+                .addInterceptors(authInterceptor)
                 // Tighten for production; kept open so the demo SDK can connect from a browser.
                 .setAllowedOriginPatterns("*");
     }

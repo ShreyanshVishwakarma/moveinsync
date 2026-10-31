@@ -73,11 +73,11 @@ public final class ConfigSdk implements AutoCloseable {
         this.eventListener = builder.eventListener;
         this.backoff = builder.backoff;
 
-        this.httpClient = HttpClient.newBuilder()
+        this.httpClient = builder.httpClient != null ? builder.httpClient : HttpClient.newBuilder()
                 .connectTimeout(builder.connectTimeout)
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
-        this.http = new ConfigHttpTransport(httpClient, baseUrl, builder.requestTimeout);
+        this.http = new ConfigHttpTransport(httpClient, baseUrl, builder.requestTimeout, builder.apiKey);
 
         this.scheduler = Executors.newScheduledThreadPool(2, runnable -> {
             Thread thread = new Thread(runnable, "config-sdk");
@@ -93,7 +93,8 @@ public final class ConfigSdk implements AutoCloseable {
                 backoff,
                 scheduler,
                 builder.connectTimeout,
-                () -> applier.current().version()
+                () -> applier.current().version(),
+                builder.apiKey
         );
 
         this.cache = builder.cacheFile != null ? new SnapshotDiskCache(builder.cacheFile) : null;
@@ -390,6 +391,8 @@ public final class ConfigSdk implements AutoCloseable {
     public static final class Builder {
 
         private String baseUrl;
+        private String apiKey;
+        private java.net.http.HttpClient httpClient;
         private String clientId;
         private String officeId;
         private String shiftId;
@@ -411,6 +414,21 @@ public final class ConfigSdk implements AutoCloseable {
         /** Required. Example: {@code http://localhost:8080}. */
         public Builder baseUrl(String baseUrl) {
             this.baseUrl = baseUrl;
+            return this;
+        }
+
+        /** API key sent on both the REST and WebSocket handshake. */
+        public Builder apiKey(String apiKey) {
+            this.apiKey = apiKey;
+            return this;
+        }
+
+        /**
+         * Shares one HTTP client across many SDK instances (connection pooling).
+         * When omitted the SDK creates its own.
+         */
+        public Builder httpClient(java.net.http.HttpClient httpClient) {
+            this.httpClient = httpClient;
             return this;
         }
 

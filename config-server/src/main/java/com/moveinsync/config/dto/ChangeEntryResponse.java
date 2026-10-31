@@ -7,6 +7,7 @@ public record ChangeEntryResponse(
         String key,
         ConfigLevel level,
         String entityId,
+        String clientId,
         String oldValue,
         String newValue,
         ChangeAction action

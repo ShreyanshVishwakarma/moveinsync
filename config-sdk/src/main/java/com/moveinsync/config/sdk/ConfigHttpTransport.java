@@ -19,12 +19,14 @@ final class ConfigHttpTransport {
     private final HttpClient client;
     private final String baseUrl;
     private final Duration timeout;
+    private final String apiKey;
     private final WireCodec codec = new WireCodec();
 
-    ConfigHttpTransport(HttpClient client, String baseUrl, Duration timeout) {
+    ConfigHttpTransport(HttpClient client, String baseUrl, Duration timeout, String apiKey) {
         this.client = client;
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.timeout = timeout;
+        this.apiKey = apiKey;
     }
 
     Optional<Long> fetchVersion() {
@@ -59,10 +61,13 @@ final class ConfigHttpTransport {
     }
 
     private HttpRequest request(String path) {
-        return HttpRequest.newBuilder(URI.create(baseUrl + path))
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .timeout(timeout)
                 .header("Accept", "application/json")
-                .GET()
-                .build();
+                .GET();
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.header("X-API-Key", apiKey);
+        }
+        return builder.build();
     }
 }

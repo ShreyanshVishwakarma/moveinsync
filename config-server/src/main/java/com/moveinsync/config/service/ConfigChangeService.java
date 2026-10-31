@@ -16,6 +16,8 @@ import com.moveinsync.config.metrics.ConfigMetrics;
 import com.moveinsync.config.repository.ChangeSetEntryRepository;
 import com.moveinsync.config.repository.ChangeSetRepository;
 import com.moveinsync.config.repository.ConfigOverrideRepository;
+import com.moveinsync.config.security.Actor;
+import com.moveinsync.config.security.TenantGuard;
 import com.moveinsync.config.snapshot.ConfigSnapshot;
 import com.moveinsync.config.snapshot.SnapshotStore;
 import com.moveinsync.config.service.validation.ConfigValidator;
@@ -34,11 +36,14 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Write path: validate -> persist atomically -> swap snapshot -> broadcast.
+ * Write path: authorise -> validate -> persist atomically -> swap snapshot -> broadcast.
  *
  * <p>The database transaction is the durability boundary; the snapshot swap is the
  * visibility boundary. Because the swap publishes one immutable snapshot, a reader
  * sees either all entries of a change set or none of them - never a mix.
+ *
+ * <p>Every entry is tagged with its owning tenant before it is persisted, so a later
+ * read can never resolve another tenant's override.
  */
 @Service
 public class ConfigChangeService {
@@ -53,6 +58,7 @@ public class ConfigChangeService {
     private final SnapshotStore snapshotStore;
     private final CommitGate commitGate;
     private final ConfigMetrics metrics;
+    private final TenantGuard tenantGuard;
     private final ApplicationEventPublisher events;
     private final TransactionTemplate transactionTemplate;
 
@@ -64,6 +70,7 @@ public class ConfigChangeService {
                                SnapshotStore snapshotStore,
                                CommitGate commitGate,
                                ConfigMetrics metrics,
+                               TenantGuard tenantGuard,
                                ApplicationEventPublisher events,
                                TransactionTemplate transactionTemplate) {
         this.overrideRepository = overrideRepository;
@@ -74,23 +81,40 @@ public class ConfigChangeService {
         this.snapshotStore = snapshotStore;
         this.commitGate = commitGate;
         this.metrics = metrics;
+        this.tenantGuard = tenantGuard;
         this.events = events;
         this.transactionTemplate = transactionTemplate;
     }
 
+    /** System-authorised publication, used by the seeder and internal tooling. */
     public ChangeSetResponse commit(CommitChangeSetRequest request) {
-        return commit(request, null);
+        return commit(request, Actor.system());
     }
 
-    /**
-     * @param revertsToVersion non-null when this change set was produced by a rollback
-     */
-    ChangeSetResponse commit(CommitChangeSetRequest request, Long revertsToVersion) {
+    public ChangeSetResponse commit(CommitChangeSetRequest request, Actor actor) {
+        return publish(request, actor, null, null);
+    }
+
+    /** Publishes a rollback that restores the state at {@code targetVersion}. */
+    ChangeSetResponse commitRollback(CommitChangeSetRequest request, Actor actor, long targetVersion) {
+        return publish(request, actor, targetVersion, null);
+    }
+
+    /** Publishes a change set that widens a staged canary to the whole client. */
+    ChangeSetResponse commitPromotion(CommitChangeSetRequest request, Actor actor, long stagedVersion) {
+        return publish(request, actor, null, stagedVersion);
+    }
+
+    private ChangeSetResponse publish(CommitChangeSetRequest request,
+                                      Actor actor,
+                                      Long revertsToVersion,
+                                      Long promotedFromVersion) {
         return commitGate.withLock(() -> {
             ConfigSnapshot snapshot = snapshotStore.current();
-            List<PreparedChange> prepared = prepare(request, snapshot);
+            List<PreparedChange> prepared = prepare(request, snapshot, actor);
 
-            Committed committed = transactionTemplate.execute(status -> persist(request, prepared, revertsToVersion));
+            Committed committed = transactionTemplate.execute(status ->
+                    persist(request, prepared, revertsToVersion, promotedFromVersion));
             if (committed == null) {
                 throw new IllegalStateException("Change set transaction returned no result");
             }
@@ -119,12 +143,13 @@ public class ConfigChangeService {
                     committed.reason(),
                     committed.createdAt(),
                     committed.revertsToVersion(),
+                    committed.promotedFromVersion(),
                     responses
             );
         });
     }
 
-    private List<PreparedChange> prepare(CommitChangeSetRequest request, ConfigSnapshot snapshot) {
+    private List<PreparedChange> prepare(CommitChangeSetRequest request, ConfigSnapshot snapshot, Actor actor) {
         List<PreparedChange> prepared = new ArrayList<>(request.changes().size());
         List<String> violations = new ArrayList<>();
         Set<OverrideScope> seen = new HashSet<>();
@@ -138,7 +163,11 @@ public class ConfigChangeService {
                 violations.add("Unknown configuration key: " + change.key());
                 continue;
             }
-            OverrideScope scope = OverrideScope.of(change.key(), change.level(), change.entityId());
+
+            // Tenant boundary first: never validate or persist data the caller may not touch.
+            String tenant = tenantGuard.tenantForWrite(actor, change.level(), change.entityId(), change.clientId());
+
+            OverrideScope scope = OverrideScope.of(change.key(), change.level(), change.entityId(), tenant);
             if (!seen.add(scope)) {
                 violations.add(change.key() + ": duplicate entry for the same level and entity");
                 continue;
@@ -154,7 +183,7 @@ public class ConfigChangeService {
                     continue;
                 }
             }
-            prepared.add(new PreparedChange(scope, newValue));
+            prepared.add(new PreparedChange(scope, tenant, newValue));
         }
 
         if (!violations.isEmpty()) {
@@ -166,11 +195,15 @@ public class ConfigChangeService {
 
     private Committed persist(CommitChangeSetRequest request,
                               List<PreparedChange> prepared,
-                              Long revertsToVersion) {
+                              Long revertsToVersion,
+                              Long promotedFromVersion) {
 
         ChangeSet changeSet = new ChangeSet(request.author(), request.reason());
         if (revertsToVersion != null) {
             changeSet.markRollbackOf(revertsToVersion);
+        }
+        if (promotedFromVersion != null) {
+            changeSet.markPromotionOf(promotedFromVersion);
         }
         changeSetRepository.saveAndFlush(changeSet);
         long version = changeSet.getVersion();
@@ -179,8 +212,8 @@ public class ConfigChangeService {
 
         for (PreparedChange change : prepared) {
             Optional<ConfigOverride> existing = overrideRepository
-                    .findByConfigKeyAndLevelAndEntityId(
-                            change.scope().key(), change.scope().level(), change.scope().entityId());
+                    .findByClientIdAndConfigKeyAndLevelAndEntityId(
+                            change.tenant(), change.scope().key(), change.scope().level(), change.scope().entityId());
 
             String oldValue = existing.map(ConfigOverride::getValue).orElse(null);
             ChangeAction action;
@@ -194,8 +227,11 @@ public class ConfigChangeService {
                 action = ChangeAction.DELETE;
             } else {
                 ConfigOverride override = existing.orElseGet(() -> new ConfigOverride(
-                        change.scope().key(), change.scope().level(), change.scope().entityId(),
-                        change.newValue()));
+                        change.scope().key(),
+                        change.scope().level(),
+                        change.scope().entityId(),
+                        change.newValue(),
+                        change.tenant()));
                 override.setValue(change.newValue());
                 override.markUpdatedBy(request.author());
                 overrideRepository.save(override);
@@ -208,6 +244,7 @@ public class ConfigChangeService {
                         change.scope().key(),
                         change.scope().level(),
                         change.scope().entityId(),
+                        change.tenant(),
                         oldValue,
                         change.newValue(),
                         action
@@ -222,11 +259,12 @@ public class ConfigChangeService {
                 changeSet.getReason(),
                 changeSet.getCreatedAt(),
                 changeSet.getRevertsToVersion(),
+                changeSet.getPromotedFromVersion(),
                 entries
         );
     }
 
-    private record PreparedChange(OverrideScope scope, String newValue) {
+    private record PreparedChange(OverrideScope scope, String tenant, String newValue) {
     }
 
     private record Committed(
@@ -235,6 +273,7 @@ public class ConfigChangeService {
             String reason,
             Instant createdAt,
             Long revertsToVersion,
+            Long promotedFromVersion,
             List<ChangeSetEntry> entries
     ) {
     }

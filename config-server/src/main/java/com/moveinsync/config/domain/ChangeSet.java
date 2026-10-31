@@ -34,6 +34,10 @@ public class ChangeSet {
     @Column(name = "reverts_to_version")
     private Long revertsToVersion;
 
+    /** Set when this change set widened a staged canary to the whole client. */
+    @Column(name = "promoted_from_version")
+    private Long promotedFromVersion;
+
     protected ChangeSet() {
         // JPA
     }
@@ -67,7 +71,15 @@ public class ChangeSet {
         return revertsToVersion;
     }
 
+    public Long getPromotedFromVersion() {
+        return promotedFromVersion;
+    }
+
     public void markRollbackOf(long targetVersion) {
         this.revertsToVersion = targetVersion;
+    }
+
+    public void markPromotionOf(long stagedVersion) {
+        this.promotedFromVersion = stagedVersion;
     }
 }

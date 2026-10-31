@@ -1,8 +1,11 @@
 package com.moveinsync.config.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.moveinsync.config.dto.ChangeEntryResponse;
 import com.moveinsync.config.dto.SnapshotResponse;
 import com.moveinsync.config.metrics.ConfigMetrics;
+import com.moveinsync.config.security.Actor;
+import com.moveinsync.config.security.WebSocketAuthInterceptor;
 import com.moveinsync.config.snapshot.SnapshotStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +18,7 @@ import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorato
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -22,10 +26,12 @@ import java.util.concurrent.CopyOnWriteArraySet;
 /**
  * Push channel for configuration deltas.
  *
- * <p>Clients connect, receive a {@code hello} frame with the current version, and then
- * either receive deltas or ask for a snapshot when they detect a version gap. Sends are
- * performed on a single background thread so a slow consumer cannot block a commit, and
- * every session is wrapped in a concurrent decorator to make writes thread-safe.
+ * <p>Clients authenticate during the HTTP upgrade; the resulting {@link Actor} is stored
+ * on the session and used to filter every frame. A client therefore never receives another
+ * tenant's override, even though all connections share one broadcast loop.
+ *
+ * <p>Sends run on a single background thread so a slow consumer cannot block a commit, and
+ * each session is wrapped in a concurrent decorator to make writes thread-safe.
  */
 @Component
 public class ConfigWebSocketHandler extends TextWebSocketHandler {
@@ -50,6 +56,11 @@ public class ConfigWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+        Actor actor = actorOf(session);
+        if (actor == null) {
+            session.close(CloseStatus.POLICY_VIOLATION);
+            return;
+        }
         WebSocketSession safeSession = new ConcurrentWebSocketSessionDecorator(session, sendTimeLimitMs, 512 * 1024);
         sessions.add(safeSession);
         metrics.clientConnected();
@@ -64,6 +75,12 @@ public class ConfigWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws IOException {
+        Actor actor = actorOf(session);
+        if (actor == null) {
+            session.close(CloseStatus.POLICY_VIOLATION);
+            return;
+        }
+
         ClientFrame frame;
         try {
             frame = objectMapper.readValue(message.getPayload(), ClientFrame.class);
@@ -85,19 +102,19 @@ public class ConfigWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        // Gap or cold start: hand over the full immutable snapshot. The SDK swaps it in
-        // with a single atomic reference write.
+        // Gap or cold start: hand over the full immutable snapshot, filtered to this tenant.
         send(session, Map.of(
                 "type", "snapshot",
                 "version", serverVersion,
-                "snapshot", SnapshotResponse.from(snapshotStore.current())
+                "snapshot", SnapshotResponse.from(snapshotStore.current(), tenantOf(actor))
         ));
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        sessions.remove(session);
-        metrics.clientDisconnected();
+        if (sessions.remove(session)) {
+            metrics.clientDisconnected();
+        }
         log.debug("WebSocket closed status={} clients={}", status, sessions.size());
     }
 
@@ -105,18 +122,33 @@ public class ConfigWebSocketHandler extends TextWebSocketHandler {
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         log.debug("WebSocket transport error", exception);
         metrics.recordBroadcastFailure();
-        sessions.remove(session);
+        if (sessions.remove(session)) {
+            metrics.clientDisconnected();
+        }
     }
 
     /**
-     * Fan-out helper used by {@link ConfigBroadcastListener}. Callers run on the
-     * single broadcast thread, which preserves version order across rapid publications.
+     * Fans a delta out to every session, filtering entries per tenant. The frame is sent
+     * even when no entry is visible, so clients still advance their version instead of
+     * triggering an unnecessary resync on the next change.
      */
-    public int broadcast(Object frame) {
+    public int broadcast(long version, List<ChangeEntryResponse> entries) {
         int sent = 0;
         for (WebSocketSession session : sessions) {
+            Actor actor = actorOf(session);
+            if (actor == null) {
+                continue;
+            }
+            List<ChangeEntryResponse> visible = entries.stream()
+                    .filter(entry -> visibleTo(actor, entry))
+                    .toList();
+            Map<String, Object> delta = Map.of(
+                    "type", "delta",
+                    "version", version,
+                    "entries", visible
+            );
             try {
-                send(session, frame);
+                send(session, delta);
                 sent++;
             } catch (IOException ex) {
                 metrics.recordBroadcastFailure();
@@ -131,6 +163,19 @@ public class ConfigWebSocketHandler extends TextWebSocketHandler {
         return sessions.size();
     }
 
+    private boolean visibleTo(Actor actor, ChangeEntryResponse entry) {
+        return actor.isAdmin() || entry.clientId() == null || entry.clientId().equals(actor.clientId());
+    }
+
+    private String tenantOf(Actor actor) {
+        return actor.isAdmin() ? null : actor.clientId();
+    }
+
+    private Actor actorOf(WebSocketSession session) {
+        Object value = session.getAttributes().get(WebSocketAuthInterceptor.ACTOR_ATTRIBUTE);
+        return value instanceof Actor actor ? actor : null;
+    }
+
     private void send(WebSocketSession session, Object payload) throws IOException {
         if (!session.isOpen()) {
             return;
@@ -140,8 +185,9 @@ public class ConfigWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void closeQuietly(WebSocketSession session) {
-        sessions.remove(session);
-        metrics.clientDisconnected();
+        if (sessions.remove(session)) {
+            metrics.clientDisconnected();
+        }
         try {
             session.close(CloseStatus.SERVER_ERROR);
         } catch (IOException ignored) {

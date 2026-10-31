@@ -13,6 +13,11 @@ public interface ConfigOverrideRepository extends JpaRepository<ConfigOverride, 
                                                                ConfigLevel level,
                                                                String entityId);
 
+    Optional<ConfigOverride> findByClientIdAndConfigKeyAndLevelAndEntityId(String clientId,
+                                                                          String configKey,
+                                                                          ConfigLevel level,
+                                                                          String entityId);
+
     List<ConfigOverride> findByLevelAndEntityId(ConfigLevel level, String entityId);
 
     List<ConfigOverride> findByConfigKey(String configKey);

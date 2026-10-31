@@ -52,6 +52,7 @@ final class ConfigWebSocketTransport implements AutoCloseable {
     private final ScheduledExecutorService scheduler;
     private final Duration connectTimeout;
     private final LongSupplier localVersion;
+    private final String apiKey;
 
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean connecting = new AtomicBoolean();
@@ -69,7 +70,8 @@ final class ConfigWebSocketTransport implements AutoCloseable {
                              BackoffPolicy backoff,
                              ScheduledExecutorService scheduler,
                              Duration connectTimeout,
-                             LongSupplier localVersion) {
+                             LongSupplier localVersion,
+                             String apiKey) {
         this.client = client;
         this.uri = uri;
         this.codec = codec;
@@ -78,6 +80,7 @@ final class ConfigWebSocketTransport implements AutoCloseable {
         this.scheduler = scheduler;
         this.connectTimeout = connectTimeout;
         this.localVersion = localVersion;
+        this.apiKey = apiKey;
     }
 
     void start() {
@@ -125,9 +128,12 @@ final class ConfigWebSocketTransport implements AutoCloseable {
             return;
         }
         reconnectPending.set(false);
-        client.newWebSocketBuilder()
-                .connectTimeout(connectTimeout)
-                .buildAsync(uri, newListener())
+        var builder = client.newWebSocketBuilder()
+                .connectTimeout(connectTimeout);
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.header("X-API-Key", apiKey);
+        }
+        builder.buildAsync(uri, newListener())
                 .whenComplete((webSocket, error) -> {
                     if (error != null) {
                         connecting.set(false);

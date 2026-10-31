@@ -5,6 +5,8 @@ import com.moveinsync.config.dto.CommitChangeSetRequest;
 import com.moveinsync.config.dto.CreateDefinitionRequest;
 import com.moveinsync.config.dto.OverrideChange;
 import com.moveinsync.config.repository.ConfigDefinitionRepository;
+import com.moveinsync.config.security.ApiKeyService;
+import com.moveinsync.config.security.Role;
 import com.moveinsync.config.service.ConfigChangeService;
 import com.moveinsync.config.service.ConfigDefinitionService;
 import org.slf4j.Logger;
@@ -17,8 +19,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Demo dataset modelled on the case study: a Bengaluru office whose booking cut-off is
- * 30 minutes while the client and global defaults stay at 45 and 60.
+ * Demo dataset modelled on the case study, plus three API keys that show the role model.
  *
  * <p>Seeding goes through the regular command path, so even the demo data has a change
  * set, an author, a reason and a version.
@@ -30,30 +31,49 @@ public class DemoDataSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DemoDataSeeder.class);
 
     private static final String CLIENT_ACME = "acme-corp";
+    private static final String CLIENT_GLOBEX = "globex-corp";
     private static final String OFFICE_BLR = "blr-office-1";
     private static final String OFFICE_HYD = "hyd-office-1";
+
+    /** Demo-only credentials. Production keys are random and issued once. */
+    public static final String ADMIN_KEY = "demo-admin-key";
+    public static final String OPERATOR_KEY = "demo-operator-key";
+    public static final String EMPLOYEE_KEY = "demo-employee-key";
+    public static final String GLOBEX_KEY = "demo-globex-key";
 
     private final ConfigDefinitionRepository definitionRepository;
     private final ConfigDefinitionService definitionService;
     private final ConfigChangeService changeService;
+    private final ApiKeyService apiKeyService;
 
     public DemoDataSeeder(ConfigDefinitionRepository definitionRepository,
                           ConfigDefinitionService definitionService,
-                          ConfigChangeService changeService) {
+                          ConfigChangeService changeService,
+                          ApiKeyService apiKeyService) {
         this.definitionRepository = definitionRepository;
         this.definitionService = definitionService;
         this.changeService = changeService;
+        this.apiKeyService = apiKeyService;
     }
 
     @Override
     public void run(ApplicationArguments args) {
+        seedApiKeys();
         if (definitionRepository.count() > 0) {
             return;
         }
 
         seedDefinitions();
         seedOverrides();
-        log.info("Demo configuration seeded");
+        log.info("Demo configuration seeded; demo keys: admin={} operator={} employee={} globex={}",
+                ADMIN_KEY, OPERATOR_KEY, EMPLOYEE_KEY, GLOBEX_KEY);
+    }
+
+    private void seedApiKeys() {
+        apiKeyService.register(ADMIN_KEY, "demo-admin", Role.ADMIN, null);
+        apiKeyService.register(OPERATOR_KEY, "demo-operator", Role.OPERATOR, CLIENT_ACME);
+        apiKeyService.register(EMPLOYEE_KEY, "demo-employee", Role.EMPLOYEE, CLIENT_ACME);
+        apiKeyService.register(GLOBEX_KEY, "demo-globex", Role.OPERATOR, CLIENT_GLOBEX);
     }
 
     private void seedDefinitions() {
@@ -106,10 +126,11 @@ public class DemoDataSeeder implements ApplicationRunner {
                 "seed",
                 "Initial tenant configuration",
                 List.of(
-                        new OverrideChange("booking_cutoff_minutes", ConfigLevel.CLIENT, CLIENT_ACME, "45"),
-                        new OverrideChange("booking_cutoff_minutes", ConfigLevel.OFFICE, OFFICE_BLR, "30"),
-                        new OverrideChange("escort_required", ConfigLevel.CLIENT, CLIENT_ACME, "true"),
-                        new OverrideChange("ride_approval_mode", ConfigLevel.OFFICE, OFFICE_HYD, "MANUAL")
+                        new OverrideChange("booking_cutoff_minutes", ConfigLevel.CLIENT, CLIENT_ACME, "45", CLIENT_ACME),
+                        new OverrideChange("booking_cutoff_minutes", ConfigLevel.OFFICE, OFFICE_BLR, "30", CLIENT_ACME),
+                        new OverrideChange("escort_required", ConfigLevel.CLIENT, CLIENT_ACME, "true", CLIENT_ACME),
+                        new OverrideChange("ride_approval_mode", ConfigLevel.OFFICE, OFFICE_HYD, "MANUAL", CLIENT_ACME),
+                        new OverrideChange("booking_cutoff_minutes", ConfigLevel.CLIENT, CLIENT_GLOBEX, "50", CLIENT_GLOBEX)
                 )
         ));
     }

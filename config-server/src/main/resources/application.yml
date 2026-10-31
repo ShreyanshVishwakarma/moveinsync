@@ -27,15 +27,18 @@ spring:
     timeout-per-shutdown-phase: 10s
 
 # Tunables for the configuration engine. All overridable via environment variables.
+# Tunables for the configuration engine. All overridable via environment variables.
 moveinsync:
   config:
-    # Async disk snapshot write is a client-SDK concern; the server only serves what clients need.
     delta-retention-versions: 1000
     max-batch-size: 200
     websocket:
       path: /ws/config
       # Used by the reconnect-storm story: broadcast fan-out is bounded.
       send-timeout-ms: 5000
+  security:
+    # Dev convenience only: the in-memory H2 console is public in the demo profile.
+    h2-console-public: true
 
 management:
   endpoints:

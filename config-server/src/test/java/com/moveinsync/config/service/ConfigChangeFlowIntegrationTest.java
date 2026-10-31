@@ -58,7 +58,7 @@ class ConfigChangeFlowIntegrationTest {
         ChangeSetResponse published = changeService.commit(new CommitChangeSetRequest(
                 "operator-1",
                 "Reduce cut-off for the Bengaluru office",
-                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "30"))
+                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "30", CLIENT))
         ));
 
         assertThat(published.version()).isEqualTo(1L);
@@ -79,7 +79,7 @@ class ConfigChangeFlowIntegrationTest {
         assertThatThrownBy(() -> changeService.commit(new CommitChangeSetRequest(
                 "operator-1",
                 "Cut-off of minus thirty minutes",
-                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "-30"))
+                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "-30", CLIENT))
         )))
                 .isInstanceOf(ValidationException.class)
                 .satisfies(ex -> assertThat(((ValidationException) ex).getViolations())
@@ -101,8 +101,8 @@ class ConfigChangeFlowIntegrationTest {
                 "operator-1",
                 "Move the night window for this office",
                 List.of(
-                        new OverrideChange("night_safety_window", ConfigLevel.OFFICE, OFFICE, "21:00-23:30"),
-                        new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "30")
+                        new OverrideChange("night_safety_window", ConfigLevel.OFFICE, OFFICE, "21:00-23:30", CLIENT),
+                        new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "30", CLIENT)
                 )
         ));
 
@@ -118,7 +118,7 @@ class ConfigChangeFlowIntegrationTest {
         changeService.commit(new CommitChangeSetRequest("operator-1", "First",
                 List.of(new OverrideChange(KEY, ConfigLevel.CLIENT, CLIENT, "45"))));
         changeService.commit(new CommitChangeSetRequest("operator-1", "Second",
-                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "30"))));
+                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "30", CLIENT))));
 
         SyncResponse delta = queryService.sync(1L);
 
@@ -138,9 +138,9 @@ class ConfigChangeFlowIntegrationTest {
         createDurationDefinition();
 
         ChangeSetResponse first = changeService.commit(new CommitChangeSetRequest("operator-1", "Set to 30",
-                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "30"))));
+                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "30", CLIENT))));
         changeService.commit(new CommitChangeSetRequest("operator-1", "Set to 20",
-                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "20"))));
+                List.of(new OverrideChange(KEY, ConfigLevel.OFFICE, OFFICE, "20", CLIENT))));
 
         RollbackResponse preview = rollbackService.rollback(
                 new RollbackRequest(first.version(), "operator-1", "Bad change", true));
