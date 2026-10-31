@@ -5,4 +5,5 @@ target/
 .vscode/
 *.log
 config_cache.json
+test-data/
 .DS_Store
