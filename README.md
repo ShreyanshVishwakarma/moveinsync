@@ -7,12 +7,16 @@ atomic, versioned change set that reaches connected services within seconds.
 
 ```
 moveinsync/
-├── config-server/   Spring Boot control plane: REST, WebSocket, JPA, metrics
-└── config-sdk/      Embedded client: microsecond reads, live deltas, disk fallback
+├── config-server/       Spring Boot control plane: REST, WebSocket, JPA, security, metrics
+├── config-sdk/          Embedded client: microsecond reads, live deltas, disk fallback
+├── config-benchmarks/   Read-path and 200-client propagation harness
+└── scripts/             kill-the-server failure test
 ```
 
-**Status:** server and client SDK complete for the core case study. Authentication/tenant
-isolation and the benchmark harness are the remaining milestones (see [Roadmap](#roadmap)).
+**Status:** all case-study requirements are implemented and measured — hierarchical
+resolution, atomic change sets, staged rollout, rollback, RBAC with tenant isolation, live
+push, disk fallback, benchmarks and a kill-the-server test. Remaining polish: Flyway
+migrations and a broader failure-injection harness (see [Roadmap](#roadmap)).
 
 ---
 
@@ -21,11 +25,12 @@ isolation and the benchmark harness are the remaining milestones (see [Roadmap](
 | Concern | Choice | Why |
 | --- | --- | --- |
 | Language | **Java 21** | Explicitly preferred by the evaluator; OOPS and layering score best here |
-| Server framework | **Spring Boot 3.3** (`web`, `websocket`, `data-jpa`, `validation`, `actuator`) | Only the pieces needed |
+| Server framework | **Spring Boot 3.3** (`web`, `websocket`, `data-jpa`, `validation`, `security`, `actuator`) | Only the pieces needed |
 | Client SDK | **Plain Java 21 + Jackson** | JDK `HttpClient`/`WebSocket` mean the SDK drags no framework into consumer services |
-| Local DB | **H2 in-memory** | Zero-setup demo and tests |
+| Auth | **Hashed API keys + Spring Security** | Stateless, role-based, tenant-scoped reads and writes |
+| Local DB | **H2 in-memory** (file mode for the crash test) | Zero-setup demo and tests |
 | Production DB | **PostgreSQL 16** | `docker compose` profile |
-| Push channel | **Raw WebSocket** at `/ws/config` | Full control over frame shape, versioning and gap handling |
+| Push channel | **Raw WebSocket** at `/ws/config` | Full control over frame shape, versioning, gap handling and per-tenant filtering |
 | Metrics | **Micrometer + Prometheus** | Counters, gauges, `/actuator/prometheus` |
 
 The core algorithm is plain Java and tested without a web server or database: the server's
@@ -42,12 +47,21 @@ Prerequisites: **JDK 21**. Maven is not required — the wrapper is included.
 ./mvnw -pl config-server -am spring-boot:run
 ```
 
+Demo API keys are seeded in the default profile (production keys are random and issued once):
+
+| Key | Role | Tenant |
+| --- | --- | --- |
+| `demo-admin-key` | ADMIN | all tenants |
+| `demo-operator-key` | OPERATOR | `acme-corp` |
+| `demo-employee-key` | EMPLOYEE | `acme-corp` |
+| `demo-globex-key` | OPERATOR | `globex-corp` |
+
 Useful URLs:
 
-- H2 console — `http://localhost:8080/h2-console` (JDBC URL `jdbc:h2:mem:configdb`, user `sa`, empty password)
-- Health — `http://localhost:8080/actuator/health`
-- Metrics — `http://localhost:8080/actuator/prometheus`
-- WebSocket — `ws://localhost:8080/ws/config`
+- H2 console — `http://localhost:8080/h2-console` (JDBC URL `jdbc:h2:mem:configdb`, user `sa`, empty password). Public only in the demo profile; disabled under `postgres`.
+- Health — `http://localhost:8080/actuator/health` (public)
+- Metrics — `http://localhost:8080/actuator/prometheus` (admin key)
+- WebSocket — `ws://localhost:8080/ws/config` (API key required during the upgrade)
 
 ### With PostgreSQL
 
@@ -64,15 +78,74 @@ docker compose up --build     # postgres + config-server, one command
 ./mvnw test
 ```
 
-Current result: **47 tests, 0 failures** across both modules (unit, integration,
-concurrency, offline cold start and live propagation).
+Current result: **58 tests, 0 failures** across both modules (unit, integration, concurrency,
+security, offline cold start, live propagation and promotion).
+
+### Benchmarks
+
+```bash
+# 1. local read path (no server needed)
+./mvnw -q -pl config-benchmarks -am -DskipTests package
+java -jar config-benchmarks/target/config-benchmarks-0.1.0-SNAPSHOT-jar-with-dependencies.jar read
+
+# 2. 200-client live propagation (server must be running)
+java -jar config-benchmarks/target/config-benchmarks-0.1.0-SNAPSHOT-jar-with-dependencies.jar \
+     propagate --clients 200 --url http://localhost:8080
+
+# 3. kill the server mid-flight, prove reads and durability survive
+pwsh ./scripts/kill-server-test.ps1
+```
+
+### Measured results
+
+Machine: **Windows 11, Intel Core i5-12500H (12 cores / 16 threads), 15.6 GB RAM, Temurin JDK 21.0.13.**
+
+| Measurement | Result |
+| --- | --- |
+| Local resolve throughput (200 definitions, 250 000 overrides) | **19.1–19.3 M resolves/sec** |
+| Local resolve latency | **p50 100 ns, p99 200 ns, p99.9 0.4–1.2 µs** |
+| Propagation to 200 live SDKs (poll disabled) | **p50 271 ms, p99 274 ms, max 274 ms; 200/200 within 5 s** |
+| Change commit HTTP round trip (cold JIT) | 155 ms |
+| Kill-the-server test | reads continued from memory; published change survived restart and the client reconnected at the same version |
+
+The read numbers include `System.nanoTime()` measurement overhead of roughly 20–30 ns per
+operation, so they are a conservative upper bound. Methodology in
+[`docs/benchmarks.md`](docs/benchmarks.md).
 
 ---
 
-## 3. Using the SDK
+## 3. Security model
 
-Add the module to a consuming service (in this repo: `config-server` already depends on it
-as a test artifact):
+Every request is authenticated with `X-API-Key`. Keys are stored as SHA-256 hashes, so a
+database leak does not hand out credentials; only the raw key is returned at creation time.
+
+| Role | Read config | Publish / roll back / promote | Manage definitions | Read audit history | Metrics |
+| --- | --- | --- | --- | --- | --- |
+| `EMPLOYEE` | own tenant | ✗ | ✗ | ✗ | ✗ |
+| `OPERATOR` | own tenant | own tenant | ✗ | ✗ | ✗ |
+| `ADMIN` | all tenants | all tenants | ✓ | ✓ | ✓ |
+
+**Tenant isolation** is enforced in three places, not just at the controller:
+
+1. **API** — a non-admin key can only name its own `clientId`; a mismatch is `403 TENANT_FORBIDDEN`.
+2. **Resolution** — every override row carries its owning client, and the in-memory index is
+   keyed by `(tenant, entityId)`. Two clients may share an office id without ever seeing each
+   other's value.
+3. **Push** — the WebSocket upgrade is authenticated and the resulting principal is stored on
+   the session. Every broadcast frame and every snapshot is filtered per tenant, so a client
+   never receives another tenant's entry even though all sockets share one loop.
+
+Office and shift overrides must declare `clientId`, because entity ids are only unique inside a
+tenant. CLIENT-level overrides use the client id as their entity id. Audit history
+(`GET /api/v1/change-sets`) spans tenants and is therefore admin-only; rollback previews remain
+available to operators and are filtered to their tenant.
+
+---
+
+## 4. Using the SDK
+
+Add the module to a consuming service (in this repo: `config-server` depends on it as a test
+artifact):
 
 ```xml
 <dependency>
@@ -85,6 +158,7 @@ as a test artifact):
 ```java
 ConfigSdk sdk = ConfigSdk.builder()
         .baseUrl("http://config-server:8080")
+        .apiKey(System.getenv("CONFIG_API_KEY"))
         .clientId("acme-corp")              // tenant this service belongs to
         .officeId("blr-office-1")           // optional default context
         .cacheFile(Path.of("config_cache.json"))
@@ -123,16 +197,19 @@ An unknown key throws. `find(key)` returns `Optional` when presence itself is un
 | Server down at cold start | `config_cache.json` loaded before the first read |
 | Reconnect storms are damped | Jittered exponential backoff, capped at 30 s |
 | Crashing mid-write cannot corrupt the cache | Temp file + atomic move, coalescing single writer |
+| Tenant safety | The SDK only ever receives its own tenant's snapshot and deltas |
 
 ### SDK configuration
 
 | Builder option | Default | Purpose |
 | --- | --- | --- |
 | `baseUrl` | required | Control plane URL (`http`/`https`, converted to `ws`/`wss`) |
+| `apiKey` | null | Sent on the REST calls and the WebSocket upgrade |
 | `clientId` / `officeId` / `shiftId` | null | Default tenant context |
 | `cacheFile` | `config_cache.json` | Disk fallback; `null` disables it |
 | `pollInterval` | 3 s | Upper bound on staleness when a push is lost |
 | `connectTimeout` / `requestTimeout` | 5 s | Transport timeouts |
+| `httpClient` | own client | Share one pooled client across many SDK instances |
 | `backoff(base, max, jitter)` | 500 ms / 30 s / 500 ms | Reconnect policy |
 | `eventListener` | no-op | Hooks for updates, gaps, sync failures and connection changes |
 
@@ -141,15 +218,16 @@ the last sync time. Details in [`docs/sdk.md`](docs/sdk.md).
 
 ---
 
-## 4. API
+## 5. API
 
-All control-plane endpoints are under `/api/v1`. Values are strings on the wire; the
-definition's `type` decides how they are validated and interpreted.
+All control-plane endpoints are under `/api/v1` and require `X-API-Key`. Values are strings
+on the wire; the definition's `type` decides how they are validated and interpreted.
 
-### Definitions
+### Definitions (admin)
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/definitions \
+  -H 'X-API-Key: demo-admin-key' \
   -H 'Content-Type: application/json' \
   -d '{
         "key": "booking_cutoff_minutes",
@@ -160,30 +238,34 @@ curl -X POST http://localhost:8080/api/v1/definitions \
         "description": "Minutes before departure that bookings close"
       }'
 
-curl http://localhost:8080/api/v1/definitions
-curl http://localhost:8080/api/v1/definitions/booking_cutoff_minutes
+curl -H 'X-API-Key: demo-admin-key' http://localhost:8080/api/v1/definitions
 ```
 
 ### Read a resolved value (with provenance)
 
 ```bash
-curl 'http://localhost:8080/api/v1/config/resolve?key=booking_cutoff_minutes&clientId=acme-corp&officeId=blr-office-1'
+curl -H 'X-API-Key: demo-employee-key' \
+  'http://localhost:8080/api/v1/config/resolve?key=booking_cutoff_minutes&officeId=blr-office-1'
 # {"key":"booking_cutoff_minutes","value":"30","sourceLevel":"OFFICE","sourceEntityId":"blr-office-1","version":1}
 ```
+
+The caller's tenant is implied by the key; naming a different `clientId` returns 403.
 
 ### Explain precedence
 
 ```bash
-curl 'http://localhost:8080/api/v1/config/explain?key=booking_cutoff_minutes&clientId=acme-corp&officeId=blr-office-1&shiftId=night'
+curl -H 'X-API-Key: demo-employee-key' \
+  'http://localhost:8080/api/v1/config/explain?key=booking_cutoff_minutes&officeId=blr-office-1'
 ```
 
 Returns every level in precedence order (`SHIFT → OFFICE → CLIENT → GLOBAL`), the value at
 each level, and which one won.
 
-### Publish an atomic change set
+### Publish an atomic change set (operator/admin)
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/change-sets \
+  -H 'X-API-Key: demo-operator-key' \
   -H 'Content-Type: application/json' \
   -d '{
         "author": "operator-1",
@@ -195,35 +277,65 @@ curl -X POST http://localhost:8080/api/v1/change-sets \
       }'
 ```
 
-Both entries become visible under **one** version, or neither does. A blank value deletes
-the override and falls back to the next level.
+Both entries become visible under **one** version, or neither does. A blank value deletes the
+override and falls back to the next level. `clientId` is optional for tenant-bound keys and
+required for admins writing office/shift overrides.
+
+### Staged rollout: canary then promote
+
+Stage the change on two offices first:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/change-sets \
+  -H 'X-API-Key: demo-operator-key' -H 'Content-Type: application/json' \
+  -d '{
+        "author": "operator-1",
+        "reason": "Canary on two Bengaluru offices",
+        "changes": [
+          {"key": "booking_cutoff_minutes", "level": "OFFICE", "entityId": "blr-office-1", "value": "25"},
+          {"key": "booking_cutoff_minutes", "level": "OFFICE", "entityId": "blr-office-2", "value": "25"}
+        ]
+      }'
+# -> {"version": 2, ...}
+
+# Every other office still resolves 30/45. Promote the canary to the whole client:
+curl -X POST -H 'X-API-Key: demo-operator-key' \
+  'http://localhost:8080/api/v1/change-sets/2/promote?removeSourceOverrides=true&author=operator-1'
+# -> new version with CLIENT-level overrides; every office now inherits 25
+```
+
+Promotion publishes a **new** version, so clients converge through the normal delta path.
+Rolling back uses the same forward-only model.
 
 ### Sync clients
 
 ```bash
-curl http://localhost:8080/api/v1/config/version
-curl 'http://localhost:8080/api/v1/config/sync?since=1'   # delta (or a full snapshot if too far behind)
-curl http://localhost:8080/api/v1/config/snapshot          # full immutable state
+curl -H 'X-API-Key: demo-employee-key' http://localhost:8080/api/v1/config/version
+curl -H 'X-API-Key: demo-employee-key' 'http://localhost:8080/api/v1/config/sync?since=1'
+curl -H 'X-API-Key: demo-employee-key' http://localhost:8080/api/v1/config/snapshot
 ```
+
+Snapshot and delta payloads are filtered to the caller's tenant.
 
 ### History and rollback
 
 ```bash
-curl http://localhost:8080/api/v1/change-sets
-curl http://localhost:8080/api/v1/change-sets/2
+# Admin-only: audit history spans tenants
+curl -H 'X-API-Key: demo-admin-key' http://localhost:8080/api/v1/change-sets
+curl -H 'X-API-Key: demo-admin-key' http://localhost:8080/api/v1/change-sets/2
 
 # Look before you leap
 curl -X POST http://localhost:8080/api/v1/rollbacks \
-  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: demo-operator-key' -H 'Content-Type: application/json' \
   -d '{"targetVersion": 1, "author": "operator-1", "reason": "Bad window", "dryRun": true}'
 
 # Publish the rollback as a new version
 curl -X POST http://localhost:8080/api/v1/rollbacks \
-  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: demo-operator-key' -H 'Content-Type: application/json' \
   -d '{"targetVersion": 1, "author": "operator-1", "reason": "Bad window", "dryRun": false}'
 ```
 
-### Validation errors
+### Error envelopes
 
 ```json
 {
@@ -236,20 +348,23 @@ curl -X POST http://localhost:8080/api/v1/rollbacks \
 }
 ```
 
-No stack traces, no payloads, no tenant PII in error responses or logs.
+Auth failures use the same shape with `UNAUTHENTICATED` (401), `FORBIDDEN` (403) and
+`TENANT_FORBIDDEN` (403). No stack traces, payloads or tenant PII appear in errors or logs.
 
 ### WebSocket protocol
+
+The upgrade carries `X-API-Key`; the session is bound to that tenant.
 
 | Direction | Frame |
 | --- | --- |
 | server → client | `{"type":"hello","version":42}` on connect |
 | client → server | `{"type":"subscribe","version":41}` |
-| server → client | `{"type":"delta","version":43,"entries":[...]}` |
-| server → client | `{"type":"snapshot","version":43,"snapshot":{...}}` when the client is behind |
+| server → client | `{"type":"delta","version":43,"entries":[...]}` (entries filtered per tenant) |
+| server → client | `{"type":"snapshot","version":43,"snapshot":{...}}` (tenant-filtered) |
 
 ---
 
-## 5. Consistency model
+## 6. Consistency model
 
 Configuration is read from an immutable in-memory snapshot swapped with a single
 `AtomicReference.set`. Each published change set is assigned a strictly increasing version
@@ -269,28 +384,33 @@ left untouched and a full snapshot is requested.
 
 ---
 
-## 6. Data model
+## 7. Data model
 
 ```
 config_definitions   (id, config_key, type, global_default_value, validation_regex,
                       allowed_values, min_value, max_value, description, updated_at)
 
-config_overrides     (id, config_key, level, entity_id, config_value, updated_by, updated_at)
-                     UNIQUE (config_key, level, entity_id)
+config_overrides     (id, client_id, config_key, level, entity_id, config_value,
+                      updated_by, updated_at)
+                     UNIQUE (client_id, config_key, level, entity_id)
 
 change_sets          (id /* = version, monotonic */, author, reason, created_at,
-                      reverts_to_version)
+                      reverts_to_version, promoted_from_version)
 
-change_set_entries   (id, change_set_id, config_key, level, entity_id,
+change_set_entries   (id, change_set_id, client_id, config_key, level, entity_id,
                       old_value, new_value, action)
+
+api_keys             (id, key_hash, label, role, client_id, active, created_at)
+                     UNIQUE (key_hash)
 ```
 
 `change_sets.id` is generated by the database identity/sequence, which gives the
-monotonicity guarantee without a separate counter that could drift.
+monotonicity guarantee without a separate counter that could drift. `client_id` on overrides
+and audit rows is what makes tenant isolation and tenant-filtered rollback possible.
 
 ---
 
-## 7. Complexity and memory
+## 8. Complexity and memory
 
 Let *D* = definitions, *O* = overrides, *L* = audit entries, *H* = hierarchy depth (fixed at 4).
 
@@ -303,20 +423,18 @@ Let *D* = definitions, *O* = overrides, *L* = audit entries, *H* = hierarchy dep
 | Commit a change set of size *k* | O(k) lookups + O(k) writes | O(k) |
 | Delta sync since *v* | O(L_v) | O(L_v) |
 | Rollback to *v* | O(L_v) replay + O(O) diff | O(O) |
+| Tenant-filtered snapshot | O(D + O) per response | O(D + O) |
 | Storage | — | O(D + O + L) |
 
 The server rebuilds the whole snapshot after a commit. That is deliberate: at tenant-config
 scale the rebuild is sub-millisecond and it removes an entire class of incremental-update
 bugs. Where it stops scaling: the snapshot must fit in one JVM heap, and the single-writer
 gate caps publication throughput (roughly a few thousand change sets/second). Beyond that,
-the next step is per-key incremental updates plus a partitioned version allocator. On the
-client, the state is O(D + O); a service with thousands of tenants per instance should hold
-only its own tenant's overrides (the snapshot endpoint is not yet tenant-filtered — see
-Roadmap).
+the next step is per-key incremental updates plus a partitioned version allocator.
 
 ---
 
-## 8. Observability
+## 9. Observability
 
 | Server metric | Type | What to alarm on |
 | --- | --- | --- |
@@ -338,72 +456,74 @@ every rejection (`code`, `path`), and every SDK sync/gap — never the payload.
 
 ---
 
-## 9. Tests: what each suite proves
+## 10. Tests: what each suite proves
 
 | Suite | Tests | Proves |
 | --- | --- | --- |
-| `ConfigSnapshotResolutionTest` | 6 | Hierarchy precedence and explain trace (server) |
+| `ConfigSnapshotResolutionTest` | 6 | Hierarchy precedence and explain trace |
+| `ConfigSnapshotTenantIsolationTest` | 5 | Shared office ids cannot leak across tenants; projection filtering |
 | `ConfigValidatorTest` | 9 | Type rules: negative durations, inverted windows, enums, lists, ranges, blanks |
 | `SnapshotAtomicityTest` | 2 | Readers never mix change sets; older versions are not published |
 | `ConfigChangeFlowIntegrationTest` | 5 | Commit/version/reject/sync/rollback against real persistence |
+| `PromotionServiceIntegrationTest` | 2 | Canary reaches two offices, promotion widens to all, non-promotable rejected |
+| `SecurityIntegrationTest` | 4 | 401 without a key, role checks, cross-tenant 403, filtered snapshots, admin-only history |
+| `ConfigSdkPropagationIntegrationTest` | 1 | Real server + real SDK, push-only delivery in < 5 s |
 | `ConfigStateTest` | 9 | SDK resolution, delta update/delete, JSON round trip, tolerant parsing |
 | `StateApplierTest` | 7 | Exact version rules: apply, duplicate, stale, gap, snapshot replace |
 | `BackoffPolicyTest` | 3 | Exponential growth, cap, jitter bounds |
 | `SnapshotDiskCacheTest` | 3 | Persistence, missing file, corrupt file |
 | `ConfigSdkOfflineTest` | 1 | Cold start from disk while the server is unreachable |
 | `SdkAtomicityTest` | 1 | 4 readers vs 2 000 delta swaps, zero mixed states |
-| `ConfigSdkPropagationIntegrationTest` | 1 | Real server + real SDK, push-only delivery in < 5 s |
 
-The propagation test sets the poll interval to 30 seconds and still observes the change in
-under five, so polling cannot be what delivered it.
+Plus two measured scenarios: the 200-client propagation benchmark and the scripted
+kill-the-server test (both above).
 
 ---
 
-## 10. Trade-offs and deliberate omissions
+## 11. Trade-offs and deliberate omissions
 
 - **Single writer.** Publication is serialised with a fair lock to keep version order and
   delta coherence. Readers never take the lock. Right trade for a control plane; multi-node
   writers would need a shared allocator and an outbox.
 - **Full snapshot rebuild per commit.** O(D + O) per write; simple and correct. Revisit only
   if the config set grows past a few hundred thousand rows.
-- **SDK keeps the whole tenant map.** Simple, and the read path stays O(1). A truly
-  multi-tenant *service* should receive a filtered snapshot; that is a server-side change,
-  listed in the roadmap.
+- **Snapshot responses are fully materialised per tenant.** Simple and correct; a project
+  with millions of overrides would paginate or stream instead.
+- **Tenant filtering is server-side.** The SDK never needs the tenant map for other clients;
+  it receives only its own rows.
 - **Rollback is forward-only.** It publishes a new change set so clients already ahead
   converge normally.
 - **Definition changes do not consume a version.** They republish the snapshot over
   WebSocket at the current version. Production would treat definitions as migrations.
 - **Same-day time windows only.** `HH:mm-HH:mm` requires start < end, matching the case
-  study's rejection rule. Overnight windows need an explicit flag or a richer type.
-- **Not implemented yet:** authentication/RBAC, server-side tenant filtering, the 200-client
-  propagation benchmark, and staged rollout.
+  study's rejection rule. Overnight windows need an explicit flag.
+- **H2 console is public in the demo profile.** Disabled under `postgres`; production must
+  keep it off.
 
 ---
 
-## 11. Roadmap
+## 12. Roadmap
 
-1. **Auth & tenancy** — API keys per service, roles (admin / operator / employee), and
-   server-side enforcement that a caller only sees its own `clientId` subtree.
-2. **Staged rollout** — a change set scoped to two offices, then promoted to everyone.
-3. **Benchmarks** — JMH for local reads (target < 1 µs), 200 simulated SDK clients for
-   propagation p50/p99, and a kill-the-server recovery test.
-4. **Failure injection** — duplicate, out-of-order and dropped frames between server and
-   SDK (the pure `StateApplier` tests cover the rules; the harness would cover delivery).
-5. **Delta retention** — serve `/config/sync` from a bounded in-memory ring instead of
-   replaying audit rows.
+1. **Flyway migrations** — schema is currently managed by Hibernate `ddl-auto` for the demo.
+2. **Failure-injection harness** — dropped/duplicated/reordered frames at the transport
+   boundary (the version rules are already unit-tested; this would test delivery).
+3. **Delta retention** — serve `/config/sync` from a bounded ring instead of replaying audit
+   rows.
+4. **Multi-node publication** — shared version allocator + outbox for horizontal scale.
 
 ---
 
-## 12. Project layout
+## 13. Project layout
 
 ```
 config-server/src/main/java/com/moveinsync/config/
-├── controller/     REST edge (definitions, query, change sets, rollback)
-├── service/        resolution orchestration, commit, sync, rollback
+├── controller/     REST edge (definitions, query, change sets, promote, rollback)
+├── service/        commit, sync, rollback, promotion
 │   └── validation/ one strategy per ConfigType
 ├── repository/     Spring Data JPA interfaces
 ├── domain/         entities and immutable value objects
 ├── snapshot/       immutable ConfigSnapshot + atomic SnapshotStore
+├── security/       API keys, roles, tenant guard, WebSocket handshake auth
 ├── ws/             WebSocket handler, publisher, configuration
 ├── dto/            request/response records
 ├── exception/      ApiException, ValidationException, global handler
@@ -411,16 +531,19 @@ config-server/src/main/java/com/moveinsync/config/
 └── config/         demo data seeder
 
 config-sdk/src/main/java/com/moveinsync/config/sdk/
-├── ConfigSdk.java          public client and builder
-├── ConfigState.java        immutable snapshot + resolution
-├── StateApplier.java       version rules and atomic state transitions
+├── ConfigSdk.java                  public client and builder
+├── ConfigState.java                immutable snapshot + resolution
+├── StateApplier.java               version rules and atomic state transitions
 ├── ConfigWebSocketTransport.java   push channel with jittered reconnect
 ├── ConfigHttpTransport.java        version check + snapshot fetch
 ├── SnapshotDiskCache.java          atomic, coalescing disk fallback
 ├── BackoffPolicy.java              exponential backoff with jitter
 └── Wire.java / WireCodec.java      JSON contract
+
+config-benchmarks/                  read + propagation harnesses, kill-test probe
+scripts/kill-server-test.ps1        automated crash/restart proof
 ```
 
-See [`docs/design.md`](docs/design.md) for the architecture diagram, the atomic-commit
-sequence diagram and the failure-mode table, and [`docs/sdk.md`](docs/sdk.md) for the SDK
-lifecycle and protocol details.
+See [`docs/design.md`](docs/design.md) for the architecture and sequence diagrams,
+[`docs/sdk.md`](docs/sdk.md) for the SDK lifecycle, and
+[`docs/benchmarks.md`](docs/benchmarks.md) for methodology and raw output.

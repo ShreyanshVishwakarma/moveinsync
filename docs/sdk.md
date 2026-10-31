@@ -71,6 +71,24 @@ A read is `state.resolve(key, context)`: three hash lookups (`SHIFT`, `OFFICE`, 
 plus a definition lookup for the global default. No locks, no allocation beyond the small
 result record, no network.
 
+### Authentication and tenancy
+
+The SDK sends its API key on every REST call and on the WebSocket upgrade:
+
+```java
+ConfigSdk.builder()
+        .baseUrl("http://config-server:8080")
+        .apiKey(System.getenv("CONFIG_API_KEY"))
+        .clientId("acme-corp")
+        ...
+```
+
+The server binds the connection to that key's tenant and filters every snapshot and delta
+before it reaches the socket. The SDK therefore never holds another tenant's overrides, and a
+compromised service cannot read across tenants even if it guesses an office id. An invalid key
+surfaces as repeated sync failures with no state applied; the last cached snapshot keeps
+serving reads.
+
 ---
 
 ## 3. Version rules

@@ -115,6 +115,9 @@ any database write, so a bad value never consumes a version.
 | Cache file corrupt | Values from the server instead | SDK logs and ignores the file | Normal sync repopulates it |
 | Single node overloaded by writes | Slower publications | Fair lock serialises writers; reads are unaffected | Scale by partitioning tenants (see trade-offs) |
 | Database unavailable | Reads still served from snapshot | Commits fail fast with `500`; no partial publication | DB restored, commits resume |
+| Missing or invalid API key | `401 UNAUTHENTICATED` | Request never reaches a controller | Caller supplies a valid key |
+| Cross-tenant read or write | `403 TENANT_FORBIDDEN` | Rejected in the guard before validation or persistence | Use a key bound to the right tenant |
+| Role too low for the action | `403 FORBIDDEN` | Spring Security rejects before the controller | Ask an operator/admin to perform it |
 
 ---
 
@@ -187,3 +190,69 @@ SDK, sets the poll interval to 30 s, publishes a change, and asserts the SDK see
 under 5 s — proving the push path rather than the poll.
 
 See [`sdk.md`](sdk.md) for the lifecycle state machine, threading model and failure table.
+
+---
+
+## 7. Authentication, roles and tenant isolation
+
+```
+   client ──X-API-Key──▶ ApiKeyAuthenticationFilter ──▶ Actor(role, clientId)
+                                │
+                                ▼
+                      Spring Security rules
+              (employee: read | operator: publish | admin: all)
+                                │
+                                ▼
+                          TenantGuard
+        read:  requested clientId must equal the actor's tenant
+        write: CLIENT rows take the entity as tenant;
+               OFFICE/SHIFT rows must carry the owning client
+                                │
+                                ▼
+                       Service / snapshot
+```
+
+- Keys are stored as SHA-256 hashes; the raw key is shown once at creation.
+- Tenant identity is part of the override data (`client_id`), not just of the request, so it
+  survives restarts and is available to every read path, including rollback reconstruction.
+- The snapshot index is keyed by `(tenant, entityId)` for office/shift scopes, which means
+  two clients can use the same office id without collision or leakage.
+- The WebSocket upgrade runs through the same filter chain; the resulting `Actor` is stored on
+  the session and every delta and snapshot is filtered per tenant before it is written.
+- Audit history spans tenants, so `GET /change-sets` is admin-only. Rollback previews remain
+  operator-accessible and are filtered to their tenant.
+- H2 console is public only in the demo profile and disabled under `postgres`.
+
+---
+
+## 8. Staged rollout
+
+A canary needs no new storage model: it is an ordinary change set whose overrides sit at
+`OFFICE` level for the chosen offices.
+
+```
+ v2: OFFICE blr-office-1 = 25
+     OFFICE blr-office-2 = 25          every other office still resolves 45/30
+
+ POST /change-sets/2/promote?removeSourceOverrides=true
+        │
+        ▼
+ v3: CLIENT acme-corp = 25              (one entry per key/tenant)
+     DELETE OFFICE blr-office-1 = 25   (optional, removes the now-redundant canary)
+     DELETE OFFICE blr-office-2 = 25
+```
+
+Promotion is published as a **new version**, so every connected client converges through the
+normal delta path and rollback still works. `promoted_from_version` records the lineage.
+
+---
+
+## 9. Measured behaviour
+
+| Measurement | Result |
+| --- | --- |
+| Local resolve, 200 definitions / 250 000 overrides | 19.1–19.3 M ops/sec, p50 100 ns, p99 200 ns |
+| Push to 200 live SDKs (polling disabled) | p50 271 ms, p99 274 ms, 200/200 within 5 s |
+| Server killed after a commit | Reads continue from memory; change survives restart; client reconnects at the same version |
+
+Methodology and raw output: [`benchmarks.md`](benchmarks.md).
