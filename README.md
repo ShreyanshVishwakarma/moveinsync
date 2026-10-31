@@ -389,6 +389,12 @@ Versions only move forward. A delta at `current + 1` is applied, anything `<= cu
 ignored as duplicate/stale, and anything `> current + 1` is treated as a gap: the state is
 left untouched and a full snapshot is requested.
 
+**Caching and eviction.** The only cache is the immutable snapshot itself: one reference,
+replaced wholesale on each version. There is no per-key cache to evict and no unbounded
+growth — the previous snapshot becomes garbage as soon as in-flight readers release it. The
+disk cache holds exactly one snapshot (atomic overwrite, coalesced writes), so it cannot grow
+either. That is why the hot path needs no LRU: replacement *is* the eviction policy.
+
 ---
 
 ## 7. Data model
