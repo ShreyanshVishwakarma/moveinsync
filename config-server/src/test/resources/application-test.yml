@@ -1,0 +1,15 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  h2:
+    console:
+      enabled: false
+
+moveinsync:
+  seed:
+    enabled: false
+
+logging:
+  level:
+    com.moveinsync.config: WARN
