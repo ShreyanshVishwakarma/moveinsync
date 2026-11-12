@@ -70,6 +70,19 @@ Useful URLs:
 - Metrics — `http://localhost:8080/actuator/prometheus` (admin key)
 - WebSocket — `ws://localhost:8080/ws/config` (API key required during the upgrade)
 
+### Dashboard
+
+A small React app in `config-ui/` demonstrates the API in a browser: resolve a setting
+through the hierarchy, publish atomic change sets, promote a canary, roll back, and watch
+live pushes arrive. It is a demo client only — production reads go through the Java SDK.
+
+```powershell
+pwsh ./scripts/run-demo.ps1    # server on 8080, dashboard on 5173
+```
+
+Requires Node 18+. See [`config-ui/README.md`](config-ui/README.md) for details and a
+five-minute demo path.
+
 ### With PostgreSQL
 
 ```bash
@@ -554,7 +567,9 @@ config-sdk/src/main/java/com/moveinsync/config/sdk/
 └── Wire.java / WireCodec.java      JSON contract
 
 config-benchmarks/                  read + propagation harnesses, kill-test probe
+config-ui/                          React dashboard for demoing the API
 scripts/run-server.ps1              build + run helper
+scripts/run-demo.ps1                server + dashboard together
 scripts/kill-server-test.ps1        automated crash/restart proof
 ```
 
