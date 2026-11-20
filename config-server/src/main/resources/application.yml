@@ -39,6 +39,13 @@ moveinsync:
   security:
     # Dev convenience only: the in-memory H2 console is public in the demo profile.
     h2-console-public: true
+    jwt:
+      # Override in any real deployment. Must be >= 32 bytes (HS256).
+      secret: ${JWT_SECRET:dev-only-change-me-moveinsync-jwt-hs256-secret-key}
+      issuer: moveinsync-config-server
+      # Maximum token lifetime. Capped at 7 days by JwtProperties.
+      access-token-ttl: 7d
+      clock-skew: 30s
 
 management:
   endpoints:

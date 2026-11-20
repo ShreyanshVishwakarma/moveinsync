@@ -5,7 +5,7 @@ import { api } from '../api'
  * Canary → promote → rollback. Promotion is version-driven, so the panel reads the
  * latest versions from the server instead of guessing one.
  */
-export default function RolloutPanel({ apiKey, tenant, serverVersion, onDone, onError, log }) {
+export default function RolloutPanel({ token, tenant, serverVersion, author, onDone, onError, log }) {
   const [stagedVersion, setStagedVersion] = useState('')
   const [targetVersion, setTargetVersion] = useState('1')
   const [reason, setReason] = useState('Roll back a bad change')
@@ -20,7 +20,7 @@ export default function RolloutPanel({ apiKey, tenant, serverVersion, onDone, on
     }
     setBusy('promote')
     try {
-      const result = await api.promote(apiKey, version, 'operator-1', true)
+      const result = await api.promote(token, version, author, true)
       log?.('commit', `Promoted v${version} → v${result.version}`, `${result.entries.length} entries`)
       onDone?.(`Canary v${version} promoted as v${result.version}`)
       setStagedVersion('')
@@ -35,7 +35,7 @@ export default function RolloutPanel({ apiKey, tenant, serverVersion, onDone, on
     const target = Number(targetVersion)
     setBusy('preview')
     try {
-      const result = await api.rollbackPreview(apiKey, target)
+      const result = await api.rollbackPreview(token, target)
       setDiff(result)
       log?.('info', `Rollback preview to v${target}`, `${result.length} changes`)
     } catch (error) {
@@ -49,9 +49,9 @@ export default function RolloutPanel({ apiKey, tenant, serverVersion, onDone, on
     const target = Number(targetVersion)
     setBusy('rollback')
     try {
-      const result = await api.rollback(apiKey, {
+      const result = await api.rollback(token, {
         targetVersion: target,
-        author: 'operator-1',
+        author,
         reason: reason.trim() || 'Rollback from console',
         dryRun: false
       })

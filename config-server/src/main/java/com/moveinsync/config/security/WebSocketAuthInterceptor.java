@@ -15,6 +15,10 @@ import java.util.Map;
  * Carries the authenticated {@link Actor} from the HTTP upgrade request into the
  * WebSocket session, so broadcast can be filtered per tenant. Unauthenticated upgrades
  * are rejected before a socket exists.
+ *
+ * <p>The upgrade is authenticated by the same JWT filter, which means a browser can pass
+ * its token as {@code ?token=} (browsers cannot set handshake headers) while SDKs use the
+ * standard {@code Authorization: Bearer} header.
  */
 @Component
 public class WebSocketAuthInterceptor implements HandshakeInterceptor {

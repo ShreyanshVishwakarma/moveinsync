@@ -8,8 +8,8 @@ const EMPTY_ROW = { key: '', level: 'OFFICE', entityId: '', value: '' }
  * Builds and publishes an atomic change set. A night window needs two entries in one
  * change set — the form makes that the normal case rather than a special one.
  */
-export default function ChangeSetPanel({ apiKey, definitions, tenant, offices, onCommitted, onError }) {
-  const [author, setAuthor] = useState('operator-1')
+export default function ChangeSetPanel({ token, definitions, tenant, offices, defaultAuthor, onCommitted, onError }) {
+  const [author, setAuthor] = useState(defaultAuthor ?? 'operator')
   const [reason, setReason] = useState('')
   const [rows, setRows] = useState([{ ...EMPTY_ROW, key: '', entityId: offices[0] ?? '' }])
   const [busy, setBusy] = useState(false)
@@ -63,7 +63,7 @@ export default function ChangeSetPanel({ apiKey, definitions, tenant, offices, o
         return entry
       })
 
-      const result = await api.commit(apiKey, {
+      const result = await api.commit(token, {
         author: author.trim() || 'operator-1',
         reason: reason.trim() || 'Change from console',
         changes

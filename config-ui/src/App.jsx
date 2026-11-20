@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api } from './api'
+import { api, ApiError } from './api'
 import { useLiveStream } from './useLiveStream'
 import TopBar from './components/TopBar'
+import LoginScreen from './components/LoginScreen'
 import ResolvePanel from './components/ResolvePanel'
 import ChangeSetPanel from './components/ChangeSetPanel'
 import RolloutPanel from './components/RolloutPanel'
@@ -9,30 +10,26 @@ import OverridesPanel from './components/OverridesPanel'
 import ActivityFeed from './components/ActivityFeed'
 import './styles.css'
 
-const KEYS = [
-  { id: 'demo-admin-key', label: 'Admin', role: 'ADMIN', client: 'all tenants' },
-  { id: 'demo-operator-key', label: 'Operator', role: 'OPERATOR', client: 'acme-corp' },
-  { id: 'demo-employee-key', label: 'Employee', role: 'EMPLOYEE', client: 'acme-corp' },
-  { id: 'demo-globex-key', label: 'Globex operator', role: 'OPERATOR', client: 'globex-corp' }
-]
-
 const TENANTS = [
   { id: 'acme-corp', label: 'acme-corp' },
   { id: 'globex-corp', label: 'globex-corp' }
 ]
 
-const OFFICES = [
-  'blr-office-1',
-  'blr-office-2',
-  'hyd-office-1',
-  'del-office-1'
-]
-
+const OFFICES = ['blr-office-1', 'blr-office-2', 'hyd-office-1', 'del-office-1']
 const SHIFTS = ['morning', 'evening', 'night']
+const SESSION_KEY = 'moveinsync.session'
 
 export default function App() {
-  const [keyId, setKeyId] = useState(KEYS[1].id)
-  const [tenant, setTenant] = useState('acme-corp')
+  const [session, setSession] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem(SESSION_KEY)
+      return stored ? JSON.parse(stored) : null
+    } catch {
+      return null
+    }
+  })
+
+  const [tenant, setTenant] = useState(session?.clientId ?? 'acme-corp')
   const [office, setOffice] = useState('blr-office-1')
   const [shift, setShift] = useState('')
   const [definitions, setDefinitions] = useState([])
@@ -43,7 +40,8 @@ export default function App() {
   const [loading, setLoading] = useState({ definitions: false, snapshot: false })
   const lastDeltaRef = useRef(null)
 
-  const apiKey = KEYS.find((entry) => entry.id === keyId)
+  const token = session?.accessToken
+  const isAdmin = session?.role === 'ADMIN'
 
   const log = useCallback((kind, message, detail) => {
     setActivity((current) => [
@@ -56,45 +54,92 @@ export default function App() {
     setBanner({ type, text, at: Date.now() })
   }, [])
 
-  const refreshVersion = useCallback(async () => {
+  const endSession = useCallback((reason) => {
+    window.localStorage.removeItem(SESSION_KEY)
+    setSession(null)
+    setSnapshot(null)
+    setDefinitions([])
+    setServerVersion(null)
+    setActivity([])
+    if (reason) notify('error', reason)
+  }, [notify])
+
+  /** Any 401 means the token is gone; send the user back to login. */
+  const guard = useCallback((error) => {
+    if (error instanceof ApiError && error.isSessionExpired) {
+      endSession(error.code === 'TOKEN_EXPIRED'
+        ? 'Session expired — please sign in again'
+        : 'Session is no longer valid — please sign in again')
+      return true
+    }
+    return false
+  }, [endSession])
+
+  const startSession = useCallback((issued) => {
+    const next = {
+      accessToken: issued.accessToken,
+      username: issued.username,
+      role: issued.role,
+      clientId: issued.clientId,
+      expiresAt: issued.expiresAt,
+      expiresInSeconds: issued.expiresInSeconds
+    }
+    window.localStorage.setItem(SESSION_KEY, JSON.stringify(next))
+    setSession(next)
+    setTenant(next.clientId ?? 'acme-corp')
+    setActivity([])
+    notify('success', `Signed in as ${next.username} (${next.role})`)
+  }, [notify])
+
+  const logout = useCallback(async () => {
     try {
-      const result = await api.version(keyId)
+      await api.logout(token)
+    } catch {
+      // Already invalid; clearing locally is enough.
+    }
+    endSession()
+  }, [token, endSession])
+
+  const refreshVersion = useCallback(async () => {
+    if (!token) return
+    try {
+      const result = await api.version(token)
       setServerVersion(result.version)
     } catch (error) {
-      setServerVersion(null)
-      if (error.status === 401) notify('error', 'API key rejected (401). Pick another role.')
+      if (!guard(error)) setServerVersion(null)
     }
-  }, [keyId, notify])
+  }, [token, guard])
 
   const refreshDefinitions = useCallback(async () => {
+    if (!token) return
     setLoading((current) => ({ ...current, definitions: true }))
     try {
-      const list = await api.definitions(keyId)
-      setDefinitions(list)
+      setDefinitions(await api.definitions(token))
     } catch (error) {
-      notify('error', `Could not load definitions: ${error.message}`)
+      if (!guard(error)) notify('error', `Could not load definitions: ${error.message}`)
     } finally {
       setLoading((current) => ({ ...current, definitions: false }))
     }
-  }, [keyId, notify])
+  }, [token, guard, notify])
 
   const refreshSnapshot = useCallback(async () => {
+    if (!token) return
     setLoading((current) => ({ ...current, snapshot: true }))
     try {
-      const result = await api.snapshot(keyId)
-      setSnapshot(result)
+      setSnapshot(await api.snapshot(token))
     } catch (error) {
-      notify('error', `Could not load snapshot: ${error.message}`)
+      if (!guard(error)) notify('error', `Could not load snapshot: ${error.message}`)
     } finally {
       setLoading((current) => ({ ...current, snapshot: false }))
     }
-  }, [keyId, notify])
+  }, [token, guard, notify])
 
   useEffect(() => {
+    if (!token) return
     refreshVersion()
     refreshDefinitions()
     refreshSnapshot()
-  }, [refreshVersion, refreshDefinitions, refreshSnapshot])
+  }, [token, refreshVersion, refreshDefinitions, refreshSnapshot])
 
   useEffect(() => {
     if (!banner) return undefined
@@ -103,8 +148,6 @@ export default function App() {
   }, [banner])
 
   const onFrame = useCallback((frame) => {
-    // A delta must be acted on once per version: the socket can deliver the same frame
-    // twice during a dev-mode remount, and the feed should mirror the server's state.
     if (frame.type === 'delta') {
       if (lastDeltaRef.current === frame.version) return
       lastDeltaRef.current = frame.version
@@ -113,9 +156,8 @@ export default function App() {
       setServerVersion(frame.version)
       refreshSnapshot()
     } else if (frame.type === 'snapshot') {
-      const incoming = frame.snapshot
-      setServerVersion(incoming.version)
-      log('snapshot', `Snapshot · v${incoming.version}`, 'gap or cold start healed')
+      setServerVersion(frame.snapshot.version)
+      log('snapshot', `Snapshot · v${frame.snapshot.version}`, 'gap or cold start healed')
       refreshSnapshot()
     } else if (frame.type === 'up-to-date') {
       log('info', 'Already up to date', `v${frame.version}`)
@@ -124,31 +166,35 @@ export default function App() {
     }
   }, [log, notify, refreshSnapshot])
 
-  const live = useLiveStream({ apiKey: keyId, onFrame })
+  const live = useLiveStream({ token, enabled: Boolean(token), onFrame })
 
-  // After a local write, ask the socket whether we missed anything.
   const syncAfterWrite = useCallback((version) => {
     live.subscribe(version)
     refreshVersion()
     refreshSnapshot()
   }, [live, refreshVersion, refreshSnapshot])
 
+  if (!session) {
+    return (
+      <div className="app">
+        {banner && <div className={`banner banner-${banner.type}`}>{banner.text}</div>}
+        <LoginScreen onLogin={startSession} />
+        <footer className="foot">
+          <span>Config server on :8080 · dashboard on :5173</span>
+          <span>Tokens are valid for up to 7 days and can be revoked instantly.</span>
+        </footer>
+      </div>
+    )
+  }
+
   return (
     <div className="app">
       <TopBar
-        keys={KEYS}
-        keyId={keyId}
-        onKeyChange={(next) => {
-          setKeyId(next)
-          const picked = KEYS.find((entry) => entry.id === next)
-          if (picked.client === 'all tenants') setTenant('acme-corp')
-          else setTenant(picked.client)
-        }}
-        role={apiKey.role}
-        tenantScope={apiKey.client}
+        session={session}
         serverVersion={serverVersion}
         liveStatus={live.status}
         liveVersion={live.version}
+        onLogout={logout}
         onRefresh={() => {
           refreshVersion()
           refreshSnapshot()
@@ -166,7 +212,7 @@ export default function App() {
       <main className="layout">
         <section className="column main-column">
           <ResolvePanel
-            apiKey={keyId}
+            token={token}
             definitions={definitions}
             tenants={TENANTS}
             offices={OFFICES}
@@ -178,19 +224,22 @@ export default function App() {
             onOfficeChange={setOffice}
             onShiftChange={setShift}
             onResult={log}
+            onSessionError={guard}
           />
 
           <ChangeSetPanel
-            apiKey={keyId}
+            token={token}
             definitions={definitions}
             tenant={tenant}
             offices={OFFICES}
+            defaultAuthor={session.username}
             onCommitted={(result) => {
               log('commit', `Published v${result.version}`, `${result.entries.length} entries`)
               notify('success', `Change set published as version ${result.version}`)
               syncAfterWrite(result.version)
             }}
             onError={(error) => {
+              if (guard(error)) return
               const text = error.details?.length ? error.details.join(' · ') : error.message
               notify('error', `${error.status || ''} ${error.code}: ${text}`)
               log('reject', 'Change set rejected', error.code)
@@ -198,32 +247,35 @@ export default function App() {
           />
 
           <RolloutPanel
-            apiKey={keyId}
+            token={token}
             tenant={tenant}
+            author={session.username}
             serverVersion={serverVersion}
             onDone={(message) => {
               notify('success', message)
               refreshVersion()
               refreshSnapshot()
             }}
-            onError={(error) => notify('error', error.message)}
+            onError={(error) => {
+              if (!guard(error)) notify('error', error.message)
+            }}
             log={log}
           />
         </section>
 
         <aside className="column side-column">
-          <OverridesPanel
-            snapshot={snapshot}
-            loading={loading.snapshot}
-            onRefresh={refreshSnapshot}
-          />
+          <OverridesPanel snapshot={snapshot} loading={loading.snapshot} onRefresh={refreshSnapshot} />
           <ActivityFeed entries={activity} onClear={() => setActivity([])} />
         </aside>
       </main>
 
       <footer className="foot">
         <span>Config server on :8080 · dashboard on :5173</span>
-        <span>Tenant isolation is enforced server-side; switching keys changes what you can see.</span>
+        <span>
+          Signed in as <strong>{session.username}</strong> · {session.role}
+          {session.clientId ? ` · ${session.clientId}` : ' · all tenants'}
+          {isAdmin && ' · admin endpoints enabled'}
+        </span>
       </footer>
     </div>
   )

@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Beginner-friendly guide to the MoveInSync Spring Boot configuration server">
+  <title>MoveInSync | Repository Guide</title>
+  <style>
+    :root {
+      --ink: #17202a;
+      --muted: #617080;
+      --blue: #2563eb;
+      --blue-dark: #1e3a8a;
+      --blue-pale: #eff6ff;
+      --surface: #ffffff;
+      --page: #f5f7fb;
+      --border: #dbe3ec;
+      --code: #111827;
+      --green: #047857;
+      --shadow: 0 12px 30px rgba(31, 49, 71, .08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font: 16px/1.7 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    a { color: var(--blue); }
+    a:hover { color: var(--blue-dark); }
+
+    .hero {
+      background: linear-gradient(135deg, #172554, #1d4ed8);
+      color: white;
+      padding: 64px 24px 72px;
+    }
+
+    .hero-inner, .layout {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: #bfdbfe;
+      font-size: .78rem;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3 {
+      color: var(--ink);
+      line-height: 1.25;
+      letter-spacing: -.02em;
+    }
+
+    h1 {
+      max-width: 800px;
+      margin: 0;
+      color: white;
+      font-size: clamp(2.2rem, 5vw, 4.2rem);
+    }
+
+    .hero p {
+      max-width: 720px;
+      margin: 20px 0 0;
+      color: #dbeafe;
+      font-size: 1.15rem;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 245px minmax(0, 1fr);
+      gap: 32px;
+      align-items: start;
+      padding: 36px 0 72px;
+    }
+
+    .toc {
+      position: sticky;
+      top: 20px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc h2 {
+      margin: 0 0 12px;
+      font-size: 1rem;
+    }
+
+    .toc ol {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .toc li { margin: 4px 0; line-height: 1.45; }
+    .toc a { color: var(--muted); text-decoration: none; font-size: .92rem; }
+    .toc a:hover { color: var(--blue); }
+
+    article {
+      min-width: 0;
+    }
+
+    section {
+      scroll-margin-top: 24px;
+      margin: 0 0 28px;
+      padding: 32px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    section:first-child { border-top: 4px solid var(--blue); }
+
+    h2 {
+      margin: 0 0 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 1.65rem;
+    }
+
+    h3 {
+      margin: 26px 0 8px;
+      font-size: 1.08rem;
+    }
+
+    p { margin: 0 0 16px; }
+    ul, ol { margin: 10px 0 20px; padding-left: 25px; }
+    li { margin: 5px 0; }
+
+    .lead {
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin: 20px 0;
+    }
+
+    .card {
+      padding: 18px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--blue-dark);
+    }
+
+    .callout {
+      margin: 20px 0;
+      padding: 16px 18px;
+      border-left: 4px solid var(--blue);
+      background: var(--blue-pale);
+      border-radius: 0 8px 8px 0;
+    }
+
+    .callout strong { color: var(--blue-dark); }
+
+    .success {
+      border-left-color: var(--green);
+      background: #ecfdf5;
+    }
+
+    code {
+      padding: 2px 5px;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      background: #f3f4f6;
+      color: #9d174d;
+      font: .9em/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    pre {
+      margin: 16px 0 22px;
+      padding: 18px 20px;
+      overflow-x: auto;
+      border: 1px solid #263244;
+      border-radius: 9px;
+      background: var(--code);
+      color: #e5e7eb;
+      font: .9rem/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre;
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+    }
+
+    table {
+      width: 100%;
+      margin: 18px 0 24px;
+      border-collapse: collapse;
+      font-size: .95rem;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f1f5f9;
+      color: #334155;
+      font-size: .82rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: #f8fafc; }
+
+    .table-wrap { overflow-x: auto; }
+    .path { color: var(--blue-dark); font-weight: 700; }
+    .muted { color: var(--muted); }
+
+    footer {
+      padding: 0 24px 50px;
+      color: var(--muted);
+      text-align: center;
+      font-size: .9rem;
+    }
+
+    @media (max-width: 820px) {
+      .layout { grid-template-columns: 1fr; }
+      .toc { position: static; }
+      .toc ol { columns: 2; column-gap: 28px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 560px) {
+      .hero { padding: 42px 20px 50px; }
+      .hero-inner, .layout { width: min(100% - 24px, 1180px); }
+      section { padding: 22px 18px; }
+      .toc ol { columns: 1; }
+      th, td { padding: 9px 10px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">MoveInSync · Beginner guide</p>
+      <h1>Understanding the repository</h1>
+      <p>
+        A practical reading order and file-by-file explanation of this Spring Boot
+        configuration server.
+      </p>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Table of contents">
+      <h2>On this page</h2>
+      <ol>
+        <li><a href="#overview">What the app does</a></li>
+        <li><a href="#flow">Request flow</a></li>
+        <li><a href="#order">Reading order</a></li>
+        <li><a href="#spring">Spring concepts</a></li>
+        <li><a href="#root">Root files</a></li>
+        <li><a href="#domain">Domain model</a></li>
+        <li><a href="#repositories">Repositories</a></li>
+        <li><a href="#snapshots">Snapshots</a></li>
+        <li><a href="#validation">Validation</a></li>
+        <li><a href="#services">Services</a></li>
+        <li><a href="#api">REST API</a></li>
+        <li><a href="#dto">DTOs and errors</a></li>
+        <li><a href="#websocket">WebSockets</a></li>
+        <li><a href="#tests">Tests</a></li>
+        <li><a href="#run">Run the app</a></li>
+      </ol>
+    </nav>
+
+    <main>
+      <article>
+        <section id="overview">
+          <p class="eyebrow">Start here</p>
+          <h2>1. What the application does</h2>
+          <p class="lead">
+            This project is a configuration server for a ride-management system. It does not
+            book rides. It stores settings, validates them, records their history, and pushes
+            updates to connected services.
+          </p>
+
+          <div class="grid">
+            <div class="card"><strong>Configuration definitions</strong>Describe a setting, its type, default value, and validation rules.</div>
+            <div class="card"><strong>Overrides</strong>Customize a setting for a client, office, or shift.</div>
+            <div class="card"><strong>Change sets</strong>Publish one or more changes as a single numbered version.</div>
+            <div class="card"><strong>Live propagation</strong>Push new versions to connected clients through WebSockets.</div>
+          </div>
+
+          <p>Configuration has four levels:</p>
+          <pre>GLOBAL
+  └── CLIENT
+        └── OFFICE
+              └── SHIFT</pre>
+
+          <p>The most specific value wins:</p>
+          <pre>SHIFT → OFFICE → CLIENT → GLOBAL default</pre>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Level</th><th>Example value</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>GLOBAL</td><td>60 minutes</td></tr>
+                <tr><td>CLIENT acme-corp</td><td>45 minutes</td></tr>
+                <tr><td>OFFICE blr-office-1</td><td>30 minutes</td></tr>
+                <tr><td>SHIFT night</td><td>20 minutes</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>A request for the night shift receives <strong>20 minutes</strong>.</p>
+        </section>
+
+        <section id="flow">
+          <h2>2. How a request moves through the app</h2>
+          <h3>Reading a configuration</h3>
+          <pre>HTTP request
+    ↓
+Controller
+    ↓
+Service
+    ↓
+In-memory ConfigSnapshot
+    ↓
+HTTP response</pre>
+
+          <h3>Writing a configuration</h3>
+          <pre>HTTP request
+    ↓
+Controller
+    ↓
+ConfigChangeService
+    ↓
+Validate every value
+    ↓
+Save the change set in one database transaction
+    ↓
+Build a new immutable snapshot
+    ↓
+Publish the snapshot atomically
+    ↓
+Broadcast an update over WebSocket
+    ↓
+HTTP response</pre>
+
+          <div class="callout success">
+            <strong>Important:</strong> normal reads use the in-memory snapshot instead of querying
+            the database. This makes reads fast and prevents a reader from seeing half of a
+            multi-key update.
+          </div>
+        </section>
+
+        <section id="order">
+          <h2>3. Recommended reading order</h2>
+          <ol>
+            <li><code>README.md</code></li>
+            <li><code>docs/design.md</code></li>
+            <li><code>pom.xml</code></li>
+            <li><code>src/main/resources/application.yml</code></li>
+            <li><code>src/main/resources/application-postgres.yml</code></li>
+            <li><code>ConfigServerApplication.java</code></li>
+            <li>Domain classes and database entities</li>
+            <li>Repository interfaces</li>
+            <li>Snapshot classes</li>
+            <li>Validation classes</li>
+            <li>Services</li>
+            <li>Controllers and DTOs</li>
+            <li>WebSocket and metrics classes</li>
+            <li>Demo data seeder</li>
+            <li>Tests</li>
+          </ol>
+          <div class="callout">
+            <strong>Shortest useful route:</strong>
+            README → design.md → application class → entities → ConfigSnapshot → ConfigValidator
+            → ConfigChangeService → ConfigQueryService → controllers → tests.
+          </div>
+        </section>
+
+        <section id="spring">
+          <h2>4. Spring Boot concepts used here</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Concept</th><th>Meaning</th></tr></thead>
+              <tbody>
+                <tr><td><code>@SpringBootApplication</code></td><td>Starts Spring Boot and scans the project for components.</td></tr>
+                <tr><td><code>@RestController</code></td><td>Exposes HTTP endpoints.</td></tr>
+                <tr><td><code>@Service</code></td><td>Marks a class containing business logic.</td></tr>
+                <tr><td><code>@Entity</code></td><td>Maps a Java class to a database table.</td></tr>
+                <tr><td><code>JpaRepository</code></td><td>Provides database operations without writing most SQL manually.</td></tr>
+                <tr><td>DTO</td><td>Object used for an HTTP request or response.</td></tr>
+                <tr><td><code>@Valid</code></td><td>Runs request validation before the controller continues.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="root">
+          <h2>5. Root files and configuration</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">README.md</td><td>Project overview, API examples, architecture, database model, and run instructions.</td></tr>
+                <tr><td class="path">docs/design.md</td><td>Detailed architecture, sequence diagrams, failure modes, and design decisions.</td></tr>
+                <tr><td class="path">pom.xml</td><td>Maven project file containing dependencies and build configuration.</td></tr>
+                <tr><td class="path">src/main/resources/application.yml</td><td>Default local configuration using an in-memory H2 database.</td></tr>
+                <tr><td class="path">src/main/resources/application-postgres.yml</td><td>PostgreSQL profile configuration.</td></tr>
+                <tr><td class="path">docker-compose.yml</td><td>Starts PostgreSQL and the config server together.</td></tr>
+                <tr><td class="path">Dockerfile</td><td>Builds and runs the app in a Java 21 container.</td></tr>
+                <tr><td class="path">mvnw / mvnw.cmd</td><td>Maven wrapper scripts for Unix-like shells and Windows.</td></tr>
+                <tr><td class="path">.mvn/wrapper/*</td><td>Support files used by the Maven wrapper.</td></tr>
+                <tr><td class="path">.gitignore</td><td>Lists files Git should not track.</td></tr>
+                <tr><td class="path">target/*</td><td>Generated build output; not handwritten application code.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3><code>ConfigServerApplication.java</code></h3>
+          <p>The main Spring Boot entry point. It starts the web server, scans the project for
+            controllers/services/repositories, and enables asynchronous processing.</p>
+        </section>
+
+        <section id="domain">
+          <h2>6. Domain model</h2>
+          <p>The <code>domain</code> package contains the data model and small value objects.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">ConfigLevel.java</td><td>Defines GLOBAL, CLIENT, OFFICE, and SHIFT levels.</td></tr>
+                <tr><td class="path">ConfigType.java</td><td>Defines NUMBER, DURATION, TIME_WINDOW, ENUM, LIST, BOOLEAN, and STRING.</td></tr>
+                <tr><td class="path">ChangeAction.java</td><td>Represents UPSERT or DELETE.</td></tr>
+                <tr><td class="path">TenantContext.java</td><td>Contains client, office, and shift IDs used during resolution.</td></tr>
+                <tr><td class="path">OverrideScope.java</td><td>Identifies one override using key, level, and entity ID.</td></tr>
+                <tr><td class="path">ResolvedValue.java</td><td>Contains the final value and where it came from.</td></tr>
+                <tr><td class="path">ResolutionStep.java</td><td>Represents one step in a precedence explanation.</td></tr>
+                <tr><td class="path">ConfigDefinition.java</td><td>JPA entity for the <code>config_definitions</code> table.</td></tr>
+                <tr><td class="path">ConfigOverride.java</td><td>JPA entity for client, office, and shift overrides.</td></tr>
+                <tr><td class="path">ChangeSet.java</td><td>JPA entity for a versioned configuration publication.</td></tr>
+                <tr><td class="path">ChangeSetEntry.java</td><td>JPA entity recording one individual change and its old/new values.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="repositories">
+          <h2>7. Repository classes</h2>
+          <p>Repositories are the database access layer. Spring Data JPA creates their
+            implementations automatically.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">ConfigDefinitionRepository.java</td><td>Finds and saves configuration definitions.</td></tr>
+                <tr><td class="path">ConfigOverrideRepository.java</td><td>Finds and saves scoped configuration overrides.</td></tr>
+                <tr><td class="path">ChangeSetRepository.java</td><td>Finds versions, including the latest version.</td></tr>
+                <tr><td class="path">ChangeSetEntryRepository.java</td><td>Loads audit entries for synchronization and rollback.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="snapshots">
+          <h2>8. Snapshot classes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">snapshot/ConfigSnapshot.java</td><td>Immutable, indexed view of definitions and overrides. Resolves values quickly.</td></tr>
+                <tr><td class="path">snapshot/SnapshotStore.java</td><td>Stores the current snapshot in an <code>AtomicReference</code> and replaces it atomically.</td></tr>
+                <tr><td class="path">service/SnapshotLoader.java</td><td>Loads database data and builds a new snapshot.</td></tr>
+                <tr><td class="path">service/SnapshotBootstrap.java</td><td>Loads the initial snapshot during application startup.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout success">
+            <strong>Why this matters:</strong> a reader sees either the complete old state or the
+            complete new state, never a mixture of both.
+          </div>
+        </section>
+
+        <section id="validation">
+          <h2>9. Validation classes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">ConfigValueValidator.java</td><td>Common interface for type-specific validators.</td></tr>
+                <tr><td class="path">ConfigValidator.java</td><td>Chooses the correct validator and collects validation errors.</td></tr>
+                <tr><td class="path">BooleanValidator.java</td><td>Validates true/false values.</td></tr>
+                <tr><td class="path">DurationValidator.java</td><td>Validates durations and their ranges.</td></tr>
+                <tr><td class="path">NumberValidator.java</td><td>Validates numeric values and ranges.</td></tr>
+                <tr><td class="path">TimeWindowValidator.java</td><td>Validates values such as <code>21:00-23:30</code>.</td></tr>
+                <tr><td class="path">EnumValidator.java</td><td>Checks that a value is in the allowed-values list.</td></tr>
+                <tr><td class="path">ListValidator.java</td><td>Validates comma-separated lists.</td></tr>
+                <tr><td class="path">StringValidator.java</td><td>Validates free text and optional regex rules.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="services">
+          <h2>10. Service classes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">CommitGate.java</td><td>Allows only one configuration writer at a time.</td></tr>
+                <tr><td class="path">ConfigChangeService.java</td><td>Validates, persists, versions, snapshots, and publishes changes.</td></tr>
+                <tr><td class="path">ConfigQueryService.java</td><td>Resolves values, explains precedence, serves snapshots, sync, and history.</td></tr>
+                <tr><td class="path">ConfigDefinitionService.java</td><td>Creates and reads definitions and validates defaults.</td></tr>
+                <tr><td class="path">RollbackService.java</td><td>Calculates and publishes forward-moving rollback change sets.</td></tr>
+                <tr><td class="path">ChangeSetResponses.java</td><td>Converts entities into API response DTOs.</td></tr>
+                <tr><td class="path">ConfigPublishedEvent.java</td><td>Event sent after a new configuration version is published.</td></tr>
+                <tr><td class="path">SnapshotLoader.java</td><td>Rebuilds an immutable snapshot from the database.</td></tr>
+                <tr><td class="path">SnapshotBootstrap.java</td><td>Loads the initial snapshot when the application starts.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3><code>ConfigChangeService.java</code> is the key write-path file</h3>
+          <pre>Receive change set
+  → Acquire CommitGate
+  → Validate every entry
+  → Begin database transaction
+  → Create change_set row
+  → Update config_overrides
+  → Create audit entries
+  → Commit transaction
+  → Build and publish a new snapshot
+  → Publish a WebSocket event</pre>
+        </section>
+
+        <section id="api">
+          <h2>11. REST controllers</h2>
+          <p>Controllers receive HTTP requests and delegate business logic to services.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Endpoints</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">ConfigQueryController.java</td><td><code>/api/v1/config/*</code></td><td>Reads, resolves, explains, and synchronizes configuration.</td></tr>
+                <tr><td class="path">DefinitionController.java</td><td><code>/api/v1/definitions</code></td><td>Creates and reads setting definitions.</td></tr>
+                <tr><td class="path">ChangeSetController.java</td><td><code>/api/v1/change-sets</code></td><td>Publishes and reads versioned change sets.</td></tr>
+                <tr><td class="path">RollbackController.java</td><td><code>/api/v1/rollbacks</code></td><td>Previews and applies rollbacks.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Important endpoints</h3>
+          <pre>GET  /api/v1/config/resolve
+GET  /api/v1/config/explain
+GET  /api/v1/config/snapshot
+GET  /api/v1/config/sync
+POST /api/v1/change-sets
+POST /api/v1/rollbacks</pre>
+        </section>
+
+        <section id="dto">
+          <h2>12. DTOs and error handling</h2>
+          <h3>DTO files</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">CreateDefinitionRequest.java</td><td>Request for creating a definition.</td></tr>
+                <tr><td class="path">CommitChangeSetRequest.java</td><td>Request for publishing a change set.</td></tr>
+                <tr><td class="path">OverrideChange.java</td><td>One override inside a change set.</td></tr>
+                <tr><td class="path">RollbackRequest.java</td><td>Request for previewing or applying a rollback.</td></tr>
+                <tr><td class="path">DefinitionResponse.java</td><td>Definition returned by the API.</td></tr>
+                <tr><td class="path">ResolveResponse.java</td><td>Resolved value, source, and version.</td></tr>
+                <tr><td class="path">ExplainResponse.java</td><td>Full precedence trace.</td></tr>
+                <tr><td class="path">SnapshotResponse.java</td><td>Complete configuration snapshot.</td></tr>
+                <tr><td class="path">SyncResponse.java</td><td>Full snapshot or changes after a version.</td></tr>
+                <tr><td class="path">ChangeSetResponse.java</td><td>One complete published change set.</td></tr>
+                <tr><td class="path">ChangeEntryResponse.java</td><td>One individual configuration change.</td></tr>
+                <tr><td class="path">VersionSummary.java</td><td>Short summary of a version.</td></tr>
+                <tr><td class="path">RollbackResponse.java</td><td>Rollback preview or result.</td></tr>
+                <tr><td class="path">ErrorResponse.java</td><td>Standard API error format.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Exception files</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">ApiException.java</td><td>Base exception for expected API errors.</td></tr>
+                <tr><td class="path">ValidationException.java</td><td>Represents invalid configuration values.</td></tr>
+                <tr><td class="path">GlobalExceptionHandler.java</td><td>Converts exceptions into clean HTTP error responses.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="websocket">
+          <h2>13. WebSockets and metrics</h2>
+          <h3>WebSocket files</h3>
+          <p>The WebSocket endpoint is <code>ws://localhost:8080/ws/config</code>.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td class="path">WebSocketConfig.java</td><td>Enables WebSockets and registers the endpoint.</td></tr>
+                <tr><td class="path">ConfigWebSocketHandler.java</td><td>Tracks clients and sends hello, snapshot, delta, and error messages.</td></tr>
+                <tr><td class="path">ConfigBroadcastListener.java</td><td>Listens for publication events and broadcasts deltas asynchronously.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <pre>{
+  "type": "hello",
+  "version": 1
+}
+
+{
+  "type": "delta",
+  "version": 2,
+  "entries": []
+}</pre>
+
+          <h3><code>metrics/ConfigMetrics.java</code></h3>
+          <p>Creates monitoring metrics for commits, rejections, rollbacks, resync requests,
+            connected clients, broadcasts, and WebSocket failures.</p>
+          <p>Metrics are available at <code>/actuator/prometheus</code>.</p>
+        </section>
+
+        <section id="tests">
+          <h2>14. Demo data and tests</h2>
+          <h3><code>config/DemoDataSeeder.java</code></h3>
+          <p>Creates example definitions and overrides when the application starts. It uses the
+            normal services, so seed data is validated and versioned like real API data.</p>
+          <pre>booking_cutoff_minutes
+max_ride_minutes
+night_safety_window
+allowed_cab_types
+escort_required
+ride_approval_mode</pre>
+
+          <h3>Test files</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>What it tests</th></tr></thead>
+              <tbody>
+                <tr><td class="path">src/test/resources/application-test.yml</td><td>Test database and test-specific settings.</td></tr>
+                <tr><td class="path">ConfigSnapshotResolutionTest.java</td><td>Configuration precedence and global defaults.</td></tr>
+                <tr><td class="path">ConfigValidatorTest.java</td><td>Invalid durations, windows, enums, numbers, lists, and blank values.</td></tr>
+                <tr><td class="path">SnapshotAtomicityTest.java</td><td>Readers never see partially applied multi-key changes.</td></tr>
+                <tr><td class="path">ConfigChangeFlowIntegrationTest.java</td><td>Complete commit, rejection, synchronization, and rollback flow.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="database">
+          <h2>15. Database tables</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Table</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td><code>config_definitions</code></td><td>Stores setting definitions and global defaults.</td></tr>
+                <tr><td><code>config_overrides</code></td><td>Stores client, office, and shift-specific values.</td></tr>
+                <tr><td><code>change_sets</code></td><td>Stores versioned configuration publications.</td></tr>
+                <tr><td><code>change_set_entries</code></td><td>Stores individual changes and audit history.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="run">
+          <h2>16. Running the application</h2>
+          <p>Requirement: Java 21.</p>
+          <pre># Linux, macOS, or Git Bash
+./mvnw spring-boot:run
+
+# Windows Command Prompt or PowerShell
+mvnw.cmd spring-boot:run</pre>
+
+          <p>Run tests:</p>
+          <pre># Linux, macOS, or Git Bash
+./mvnw test
+
+# Windows
+mvnw.cmd test</pre>
+
+          <p>Useful URLs:</p>
+          <ul>
+            <li><code>http://localhost:8080/h2-console</code></li>
+            <li><code>http://localhost:8080/actuator/health</code></li>
+            <li><code>http://localhost:8080/actuator/prometheus</code></li>
+            <li><code>ws://localhost:8080/ws/config</code></li>
+          </ul>
+        </section>
+
+        <section id="limitations">
+          <h2>17. Current limitations</h2>
+          <ul>
+            <li>Authentication is not implemented.</li>
+            <li>Role-based access control is not implemented.</li>
+            <li>Tenant isolation is not enforced yet.</li>
+            <li>The embedded client SDK is not implemented yet.</li>
+            <li>The default WebSocket origin setting is open for demo purposes.</li>
+            <li>Production database migrations should use Flyway or Liquibase.</li>
+          </ul>
+        </section>
+
+        <section id="mental-model">
+          <h2>Final mental model</h2>
+          <pre>Definitions describe settings.
+Overrides customize settings for a client, office, or shift.
+Change sets version changes.
+Repositories read and write the database.
+Services implement the business rules.
+Snapshots make reads fast and atomic.
+Controllers expose REST APIs.
+WebSockets push new versions to clients.
+Tests verify the important behavior.</pre>
+        </section>
+      </article>
+    </main>
+  </div>
+
+  <footer>
+    MoveInSync repository learning guide · Static HTML · No external dependencies
+  </footer>
+</body>
+</html>

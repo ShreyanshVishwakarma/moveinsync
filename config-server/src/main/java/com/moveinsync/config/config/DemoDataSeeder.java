@@ -7,6 +7,8 @@ import com.moveinsync.config.dto.OverrideChange;
 import com.moveinsync.config.repository.ConfigDefinitionRepository;
 import com.moveinsync.config.security.ApiKeyService;
 import com.moveinsync.config.security.Role;
+import com.moveinsync.config.security.User;
+import com.moveinsync.config.security.UserRepository;
 import com.moveinsync.config.service.ConfigChangeService;
 import com.moveinsync.config.service.ConfigDefinitionService;
 import org.slf4j.Logger;
@@ -14,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -35,38 +38,65 @@ public class DemoDataSeeder implements ApplicationRunner {
     private static final String OFFICE_BLR = "blr-office-1";
     private static final String OFFICE_HYD = "hyd-office-1";
 
-    /** Demo-only credentials. Production keys are random and issued once. */
+    /** Demo-only credentials. Production users are created by an admin and hashed with BCrypt. */
     public static final String ADMIN_KEY = "demo-admin-key";
     public static final String OPERATOR_KEY = "demo-operator-key";
     public static final String EMPLOYEE_KEY = "demo-employee-key";
     public static final String GLOBEX_KEY = "demo-globex-key";
 
+    public static final String ADMIN_USER = "admin";
+    public static final String OPERATOR_USER = "operator";
+    public static final String EMPLOYEE_USER = "employee";
+    public static final String GLOBEX_USER = "globex";
+    public static final String DEMO_PASSWORD = "password123";
+
     private final ConfigDefinitionRepository definitionRepository;
     private final ConfigDefinitionService definitionService;
     private final ConfigChangeService changeService;
     private final ApiKeyService apiKeyService;
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     public DemoDataSeeder(ConfigDefinitionRepository definitionRepository,
                           ConfigDefinitionService definitionService,
                           ConfigChangeService changeService,
-                          ApiKeyService apiKeyService) {
+                          ApiKeyService apiKeyService,
+                          UserRepository userRepository,
+                          PasswordEncoder passwordEncoder) {
         this.definitionRepository = definitionRepository;
         this.definitionService = definitionService;
         this.changeService = changeService;
         this.apiKeyService = apiKeyService;
+        this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
     public void run(ApplicationArguments args) {
         seedApiKeys();
+        seedUsers();
         if (definitionRepository.count() > 0) {
             return;
         }
 
         seedDefinitions();
         seedOverrides();
-        log.info("Demo configuration seeded; demo keys: admin={} operator={} employee={} globex={}",
-                ADMIN_KEY, OPERATOR_KEY, EMPLOYEE_KEY, GLOBEX_KEY);
+        log.info("Demo configuration seeded; demo users: {} / {} / {} / {} (password {})",
+                ADMIN_USER, OPERATOR_USER, EMPLOYEE_USER, GLOBEX_USER, DEMO_PASSWORD);
+    }
+
+    private void seedUsers() {
+        registerUser(ADMIN_USER, Role.ADMIN, null);
+        registerUser(OPERATOR_USER, Role.OPERATOR, CLIENT_ACME);
+        registerUser(EMPLOYEE_USER, Role.EMPLOYEE, CLIENT_ACME);
+        registerUser(GLOBEX_USER, Role.OPERATOR, CLIENT_GLOBEX);
+    }
+
+    private void registerUser(String username, Role role, String clientId) {
+        if (userRepository.existsByUsername(username)) {
+            return;
+        }
+        userRepository.save(new User(username, passwordEncoder.encode(DEMO_PASSWORD), role, clientId));
     }
 
     private void seedApiKeys() {

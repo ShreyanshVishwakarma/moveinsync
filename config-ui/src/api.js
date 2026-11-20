@@ -1,5 +1,6 @@
 // Thin client for the config server's REST API.
-// Every call takes the API key explicitly so the UI can switch roles without reloading.
+// Every call takes the bearer token explicitly so the UI can switch sessions and handle
+// 401s (expired or revoked token) in one place.
 
 const BASE = '/api/v1'
 
@@ -10,11 +11,16 @@ export class ApiError extends Error {
     this.code = payload?.code || 'UNKNOWN'
     this.details = payload?.details || []
   }
+
+  /** True when the session is gone and the user has to log in again. */
+  get isSessionExpired() {
+    return this.status === 401 && ['TOKEN_EXPIRED', 'TOKEN_REVOKED', 'TOKEN_INVALID', 'UNAUTHENTICATED'].includes(this.code)
+  }
 }
 
-async function request(path, { method = 'GET', apiKey, body } = {}) {
+async function request(path, { method = 'GET', token, body } = {}) {
   const headers = { Accept: 'application/json' }
-  if (apiKey) headers['X-API-Key'] = apiKey
+  if (token) headers['Authorization'] = `Bearer ${token}`
   if (body !== undefined) headers['Content-Type'] = 'application/json'
 
   const response = await fetch(`${BASE}${path}`, {
@@ -33,51 +39,64 @@ async function request(path, { method = 'GET', apiKey, body } = {}) {
 }
 
 export const api = {
-  version: (apiKey) => request('/config/version', { apiKey }),
+  // --- auth -------------------------------------------------------------------
+  login: (username, password, ttlSeconds) =>
+    request('/auth/login', {
+      method: 'POST',
+      body: { username, password, ttlSeconds: ttlSeconds ?? null }
+    }),
 
-  definitions: (apiKey) => request('/definitions', { apiKey }),
+  me: (token) => request('/auth/me', { token }),
 
-  createDefinition: (apiKey, definition) =>
-    request('/definitions', { method: 'POST', apiKey, body: definition }),
+  logout: (token) => request('/auth/logout', { method: 'POST', token }),
 
-  snapshot: (apiKey) => request('/config/snapshot', { apiKey }),
+  // --- reads ------------------------------------------------------------------
+  version: (token) => request('/config/version', { token }),
 
-  resolve: (apiKey, { key, clientId, officeId, shiftId }) => {
+  definitions: (token) => request('/definitions', { token }),
+
+  createDefinition: (token, definition) =>
+    request('/definitions', { method: 'POST', token, body: definition }),
+
+  snapshot: (token) => request('/config/snapshot', { token }),
+
+  resolve: (token, { key, clientId, officeId, shiftId }) => {
     const params = new URLSearchParams({ key })
     if (clientId) params.set('clientId', clientId)
     if (officeId) params.set('officeId', officeId)
     if (shiftId) params.set('shiftId', shiftId)
-    return request(`/config/resolve?${params}`, { apiKey })
+    return request(`/config/resolve?${params}`, { token })
   },
 
-  explain: (apiKey, { key, clientId, officeId, shiftId }) => {
+  explain: (token, { key, clientId, officeId, shiftId }) => {
     const params = new URLSearchParams({ key })
     if (clientId) params.set('clientId', clientId)
     if (officeId) params.set('officeId', officeId)
     if (shiftId) params.set('shiftId', shiftId)
-    return request(`/config/explain?${params}`, { apiKey })
+    return request(`/config/explain?${params}`, { token })
   },
 
-  commit: (apiKey, changeSet) =>
-    request('/change-sets', { method: 'POST', apiKey, body: changeSet }),
+  // --- writes -----------------------------------------------------------------
+  commit: (token, changeSet) =>
+    request('/change-sets', { method: 'POST', token, body: changeSet }),
 
-  history: (apiKey, limit = 20) => request(`/change-sets?limit=${limit}`, { apiKey }),
+  history: (token, limit = 20) => request(`/change-sets?limit=${limit}`, { token }),
 
-  changeSet: (apiKey, version) => request(`/change-sets/${version}`, { apiKey }),
+  changeSet: (token, version) => request(`/change-sets/${version}`, { token }),
 
-  promote: (apiKey, version, author, removeSourceOverrides = true) =>
+  promote: (token, version, author, removeSourceOverrides = true) =>
     request(
       `/change-sets/${version}/promote?removeSourceOverrides=${removeSourceOverrides}&author=${encodeURIComponent(author)}`,
-      { method: 'POST', apiKey }
+      { method: 'POST', token }
     ),
 
-  rollbackPreview: (apiKey, targetVersion) =>
-    request(`/rollbacks/${targetVersion}/preview`, { apiKey }),
+  rollbackPreview: (token, targetVersion) =>
+    request(`/rollbacks/${targetVersion}/preview`, { token }),
 
-  rollback: (apiKey, { targetVersion, author, reason, dryRun }) =>
+  rollback: (token, { targetVersion, author, reason, dryRun }) =>
     request('/rollbacks', {
       method: 'POST',
-      apiKey,
+      token,
       body: { targetVersion, author, reason, dryRun }
     })
 }

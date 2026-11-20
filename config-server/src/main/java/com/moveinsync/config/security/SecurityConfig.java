@@ -6,22 +6,45 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Stateless security.
+ * Stateless JWT security.
  *
- * <p>Every API request must carry an API key. Reads are open to any authenticated role
- * (scoped to the caller's tenant), publications require OPERATOR or ADMIN, and schema
- * changes require ADMIN. The H2 console is public only in the demo profile.
+ * <p>Every endpoint is protected by an explicit role rule; there is no "authenticated
+ * enough" catch-all, so adding an endpoint without a rule fails closed (403) rather than
+ * silently becoming readable by any valid token.
+ *
+ * <pre>
+ * POST /api/v1/auth/login                     public        (issues a token)
+ * GET  /api/v1/auth/me                        any role      (own claims)
+ * GET  /api/v1/config/**                      any role      (tenant-scoped reads)
+ * POST /api/v1/change-sets                    OPERATOR, ADMIN
+ * POST /api/v1/change-sets/{v}/promote        OPERATOR, ADMIN
+ * GET  /api/v1/change-sets/**                 ADMIN         (cross-tenant audit)
+ * POST /api/v1/rollbacks                      OPERATOR, ADMIN
+ * GET  /api/v1/rollbacks/**                   OPERATOR, ADMIN
+ * GET  /api/v1/definitions                    any role
+ * POST /api/v1/definitions                    ADMIN
+ * GET  /actuator/{health,info}                public
+ * GET  /actuator/**                           ADMIN
+ * </pre>
  */
 @Configuration
 public class SecurityConfig {
 
     @Bean
+    public PasswordEncoder passwordEncoder() {
+        // Login only; tokens are the per-request credential.
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                   ApiKeyAuthenticationFilter apiKeyFilter,
+                                                   JwtAuthenticationFilter jwtFilter,
                                                    AuthErrorHandlers authErrorHandlers,
                                                    @Value("${moveinsync.security.h2-console-public:true}") boolean h2ConsolePublic)
             throws Exception {
@@ -32,27 +55,45 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
                 .authorizeHttpRequests(auth -> {
-                    auth.requestMatchers("/actuator/health", "/actuator/info").permitAll();
-
-                    if (h2ConsolePublic) {
+                    // --- public -------------------------------------------------------
+                    auth.requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll();
+                    auth.requestMatchers("/actuator/health", "/actuator/info").permitAll();                    if (h2ConsolePublic) {
                         auth.requestMatchers("/h2-console/**").permitAll();
                     }
 
-                    auth.requestMatchers("/actuator/**").hasRole(Role.ADMIN.name());
-                    auth.requestMatchers(HttpMethod.POST, "/api/v1/definitions").hasRole(Role.ADMIN.name());
-                    auth.requestMatchers(HttpMethod.POST, "/api/v1/change-sets", "/api/v1/change-sets/*/promote")
+                    // --- authenticated, any role ---------------------------------------
+                    auth.requestMatchers(HttpMethod.GET, "/api/v1/auth/me").authenticated();
+                    auth.requestMatchers(HttpMethod.POST, "/api/v1/auth/logout").authenticated();
+                    // Live delta channel: authenticated like any read, then tenant-filtered.
+                    auth.requestMatchers("/ws/**").hasAnyRole(
+                            Role.EMPLOYEE.name(), Role.OPERATOR.name(), Role.ADMIN.name());
+                    auth.requestMatchers(HttpMethod.GET, "/api/v1/config/**").hasAnyRole(
+                            Role.EMPLOYEE.name(), Role.OPERATOR.name(), Role.ADMIN.name());
+                    auth.requestMatchers(HttpMethod.GET, "/api/v1/definitions/**").hasAnyRole(
+                            Role.EMPLOYEE.name(), Role.OPERATOR.name(), Role.ADMIN.name());
+
+                    // --- operator and above --------------------------------------------
+                    auth.requestMatchers(HttpMethod.POST,
+                                    "/api/v1/change-sets",
+                                    "/api/v1/change-sets/*/promote")
                             .hasAnyRole(Role.OPERATOR.name(), Role.ADMIN.name());
                     auth.requestMatchers(HttpMethod.POST, "/api/v1/rollbacks")
                             .hasAnyRole(Role.OPERATOR.name(), Role.ADMIN.name());
-                    // History exposes every tenant's audit rows; only admins may read it.
-                    auth.requestMatchers(HttpMethod.GET, "/api/v1/change-sets/**").hasRole(Role.ADMIN.name());
+                    auth.requestMatchers(HttpMethod.GET, "/api/v1/rollbacks/**")
+                            .hasAnyRole(Role.OPERATOR.name(), Role.ADMIN.name());
 
-                    auth.anyRequest().authenticated();
+                    // --- admin only ----------------------------------------------------
+                    auth.requestMatchers(HttpMethod.GET, "/api/v1/change-sets/**").hasRole(Role.ADMIN.name());
+                    auth.requestMatchers(HttpMethod.POST, "/api/v1/definitions").hasRole(Role.ADMIN.name());
+                    auth.requestMatchers("/actuator/**").hasRole(Role.ADMIN.name());
+
+                    // Fail closed: anything not listed above requires ADMIN, never "any token".
+                    auth.anyRequest().hasRole(Role.ADMIN.name());
                 })
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint(authErrorHandlers)
                         .accessDeniedHandler(authErrorHandlers))
-                .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

@@ -1,12 +1,9 @@
 export default function TopBar({
-  keys,
-  keyId,
-  onKeyChange,
-  role,
-  tenantScope,
+  session,
   serverVersion,
   liveStatus,
   liveVersion,
+  onLogout,
   onRefresh
 }) {
   const liveLabel = {
@@ -28,20 +25,10 @@ export default function TopBar({
       </div>
 
       <div className="topbar-controls">
-        <label className="field">
-          <span>Acting as</span>
-          <select value={keyId} onChange={(event) => onKeyChange(event.target.value)}>
-            {keys.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.label} · {entry.role}
-              </option>
-            ))}
-          </select>
-        </label>
-
         <div className="chips">
-          <span className="chip chip-role">{role}</span>
-          <span className="chip">{tenantScope}</span>
+          <span className="chip chip-role">{session.role}</span>
+          <span className="chip">{session.username}</span>
+          <span className="chip">{session.clientId ?? 'all tenants'}</span>
         </div>
 
         <div className="version-block">
@@ -58,6 +45,9 @@ export default function TopBar({
 
         <button className="button ghost" type="button" onClick={onRefresh}>
           Refresh
+        </button>
+        <button className="button ghost" type="button" onClick={onLogout}>
+          Sign out
         </button>
       </div>
     </header>

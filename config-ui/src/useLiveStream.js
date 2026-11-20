@@ -3,11 +3,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 /**
  * Live connection to the config server's WebSocket.
  *
- * Browsers cannot set headers on a WebSocket handshake, so the key travels as a query
- * parameter (the server's filter accepts it). Reconnects use jittered exponential
- * backoff, mirroring the embedded SDK.
+ * Browsers cannot set headers on a WebSocket handshake, so the bearer token travels as a
+ * query parameter (the server's JWT filter accepts it). Reconnects use jittered
+ * exponential backoff, mirroring the embedded SDK.
  */
-export function useLiveStream({ apiKey, enabled = true, onFrame }) {
+export function useLiveStream({ token, enabled = true, onFrame }) {
   const [status, setStatus] = useState('idle')
   const [version, setVersion] = useState(null)
   const socketRef = useRef(null)
@@ -18,10 +18,10 @@ export function useLiveStream({ apiKey, enabled = true, onFrame }) {
   frameHandler.current = onFrame
 
   const connect = useCallback(() => {
-    if (!enabled || !apiKey) return undefined
+    if (!enabled || !token) return undefined
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${window.location.host}/ws/config?apiKey=${encodeURIComponent(apiKey)}`
+    const url = `${protocol}//${window.location.host}/ws/config?token=${encodeURIComponent(token)}`
 
     setStatus('connecting')
     const socket = new WebSocket(url)
@@ -61,7 +61,7 @@ export function useLiveStream({ apiKey, enabled = true, onFrame }) {
     }
 
     return undefined
-  }, [apiKey, enabled])
+  }, [token, enabled])
 
   useEffect(() => {
     connect()

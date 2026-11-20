@@ -1,6 +1,7 @@
 package com.moveinsync.config.exception;
 
 import com.moveinsync.config.dto.ErrorResponse;
+import com.moveinsync.config.security.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +37,19 @@ public class GlobalExceptionHandler {
         }
         return ResponseEntity.status(ex.getStatus())
                 .body(ErrorResponse.of(ex.getStatus().value(), ex.getCode(), ex.getMessage(), details, request.getRequestURI()));
+    }
+
+    @ExceptionHandler(AuthService.InvalidCredentialsException.class)
+    public ResponseEntity<ErrorResponse> handleBadCredentials(AuthService.InvalidCredentialsException ex,
+                                                             HttpServletRequest request) {
+        // Deliberately identical for unknown user and wrong password.
+        log.info("Login rejected path={}", request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ErrorResponse.of(
+                HttpStatus.UNAUTHORIZED.value(),
+                "INVALID_CREDENTIALS",
+                ex.getMessage(),
+                request.getRequestURI()
+        ));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

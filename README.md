@@ -27,7 +27,7 @@ migrations and a broader failure-injection harness (see [Roadmap](#roadmap)).
 | Language | **Java 21** | Explicitly preferred by the evaluator; OOPS and layering score best here |
 | Server framework | **Spring Boot 3.3** (`web`, `websocket`, `data-jpa`, `validation`, `security`, `actuator`) | Only the pieces needed |
 | Client SDK | **Plain Java 21 + Jackson** | JDK `HttpClient`/`WebSocket` mean the SDK drags no framework into consumer services |
-| Auth | **Hashed API keys + Spring Security** | Stateless, role-based, tenant-scoped reads and writes |
+| Auth | **JWT (HS256) + BCrypt logins** | Stateless bearer tokens, role-based on every endpoint; API keys kept for service accounts |
 | Local DB | **H2 in-memory** (file mode for the crash test) | Zero-setup demo and tests |
 | Production DB | **PostgreSQL 16** | `docker compose` profile |
 | Push channel | **Raw WebSocket** at `/ws/config` | Full control over frame shape, versioning, gap handling and per-tenant filtering |
@@ -54,21 +54,25 @@ On Windows the helper script does both steps:
 pwsh ./scripts/run-server.ps1
 ```
 
-Demo API keys are seeded in the default profile (production keys are random and issued once):
+Demo users are seeded in the default profile. Log in with `POST /api/v1/auth/login`:
 
-| Key | Role | Tenant |
-| --- | --- | --- |
-| `demo-admin-key` | ADMIN | all tenants |
-| `demo-operator-key` | OPERATOR | `acme-corp` |
-| `demo-employee-key` | EMPLOYEE | `acme-corp` |
-| `demo-globex-key` | OPERATOR | `globex-corp` |
+| Username | Password | Role | Tenant |
+| --- | --- | --- | --- |
+| `admin` | `password123` | ADMIN | all tenants |
+| `operator` | `password123` | OPERATOR | `acme-corp` |
+| `employee` | `password123` | EMPLOYEE | `acme-corp` |
+| `globex` | `password123` | OPERATOR | `globex-corp` |
+
+Service-account API keys are seeded too (`demo-admin-key`, `demo-operator-key`,
+`demo-employee-key`, `demo-globex-key`) for callers that cannot log in. See
+[`docs/jwt-curl-cheatsheet.md`](docs/jwt-curl-cheatsheet.md) for manual checks.
 
 Useful URLs:
 
 - H2 console — `http://localhost:8080/h2-console` (JDBC URL `jdbc:h2:mem:configdb`, user `sa`, empty password). Public only in the demo profile; disabled under `postgres`.
 - Health — `http://localhost:8080/actuator/health` (public)
 - Metrics — `http://localhost:8080/actuator/prometheus` (admin key)
-- WebSocket — `ws://localhost:8080/ws/config` (API key required during the upgrade)
+- WebSocket — `ws://localhost:8080/ws/config` (bearer token required; browsers may pass `?token=`)
 
 ### Dashboard
 
@@ -136,8 +140,42 @@ operation, so they are a conservative upper bound. Methodology in
 
 ## 3. Security model
 
-Every request is authenticated with `X-API-Key`. Keys are stored as SHA-256 hashes, so a
-database leak does not hand out credentials; only the raw key is returned at creation time.
+Every request authenticates with a **JWT bearer token**. `POST /api/v1/auth/login` exchanges
+credentials for a signed HS256 token carrying the subject, role and tenant; the default
+lifetime is **7 days** and the server clamps any longer request to that ceiling. Nothing is
+stored per session, so authorisation costs no database round trip.
+
+```
+POST /api/v1/auth/login  {username, password}   → {accessToken, expiresInSeconds, role, clientId}
+GET  /api/v1/auth/me      Authorization: Bearer  → {username, role, clientId, tokenId, expiresAt}
+POST /api/v1/auth/logout  Authorization: Bearer  → 204   (adds the jti to the revocation list)
+```
+
+Role and tenant come from the stored user, never from the login request, so a caller cannot
+choose its own privileges. Passwords are BCrypt hashes. **Service accounts keep using
+`X-API-Key`**, which maps to the same principal, so every role rule applies identically.
+
+Every endpoint has an explicit rule in `SecurityConfig`; there is no "any valid token" catch
+all, so a new endpoint fails closed (403) rather than silently becoming readable.
+
+| Endpoint | Rule |
+| --- | --- |
+| `POST /api/v1/auth/login` | public |
+| `GET /api/v1/auth/me`, `POST /auth/logout` | any authenticated role |
+| `GET /api/v1/config/**`, `GET /api/v1/definitions/**` | EMPLOYEE, OPERATOR, ADMIN |
+| `GET /ws/**` | EMPLOYEE, OPERATOR, ADMIN |
+| `POST /api/v1/change-sets`, `POST /change-sets/{v}/promote` | OPERATOR, ADMIN |
+| `POST /api/v1/rollbacks`, `GET /api/v1/rollbacks/**` | OPERATOR, ADMIN |
+| `GET /api/v1/change-sets/**` | ADMIN (cross-tenant audit) |
+| `POST /api/v1/definitions` | ADMIN |
+| `GET /actuator/**` | ADMIN (`health`, `info` public) |
+| anything else | ADMIN (fail closed) |
+
+**Lifetime and revocation.** `moveinsync.security.jwt.access-token-ttl` defaults to `7d` and
+`JwtProperties` refuses to start if it is longer, so the 7-day maximum is enforced at boot,
+at issue time and again when parsing. Because tokens are stateless, logout writes the `jti` to
+`revoked_tokens`; a revoked token is rejected immediately even though its signature is still
+valid, and expired revocations are purged so the table stays small.
 
 | Role | Read config | Publish / roll back / promote | Manage definitions | Read audit history | Metrics |
 | --- | --- | --- | --- | --- | --- |
@@ -240,14 +278,14 @@ the last sync time. Details in [`docs/sdk.md`](docs/sdk.md).
 
 ## 5. API
 
-All control-plane endpoints are under `/api/v1` and require `X-API-Key`. Values are strings
+All control-plane endpoints are under `/api/v1` and require `Authorization: Bearer <token>`. Values are strings
 on the wire; the definition's `type` decides how they are validated and interpreted.
 
 ### Definitions (admin)
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/definitions \
-  -H 'X-API-Key: demo-admin-key' \
+  -H 'Authorization: Bearer \' \\
   -H 'Content-Type: application/json' \
   -d '{
         "key": "booking_cutoff_minutes",
@@ -258,13 +296,13 @@ curl -X POST http://localhost:8080/api/v1/definitions \
         "description": "Minutes before departure that bookings close"
       }'
 
-curl -H 'X-API-Key: demo-admin-key' http://localhost:8080/api/v1/definitions
+curl -H 'Authorization: Bearer \' http://localhost:8080/api/v1/definitions
 ```
 
 ### Read a resolved value (with provenance)
 
 ```bash
-curl -H 'X-API-Key: demo-employee-key' \
+curl -H 'Authorization: Bearer \' \
   'http://localhost:8080/api/v1/config/resolve?key=booking_cutoff_minutes&officeId=blr-office-1'
 # {"key":"booking_cutoff_minutes","value":"30","sourceLevel":"OFFICE","sourceEntityId":"blr-office-1","version":1}
 ```
@@ -274,7 +312,7 @@ The caller's tenant is implied by the key; naming a different `clientId` returns
 ### Explain precedence
 
 ```bash
-curl -H 'X-API-Key: demo-employee-key' \
+curl -H 'Authorization: Bearer \' \
   'http://localhost:8080/api/v1/config/explain?key=booking_cutoff_minutes&officeId=blr-office-1'
 ```
 
@@ -285,7 +323,7 @@ each level, and which one won.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/change-sets \
-  -H 'X-API-Key: demo-operator-key' \
+  -H 'Authorization: Bearer \' \
   -H 'Content-Type: application/json' \
   -d '{
         "author": "operator-1",
@@ -307,7 +345,7 @@ Stage the change on two offices first:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/change-sets \
-  -H 'X-API-Key: demo-operator-key' -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer \' -H 'Content-Type: application/json' \
   -d '{
         "author": "operator-1",
         "reason": "Canary on two Bengaluru offices",
@@ -319,7 +357,7 @@ curl -X POST http://localhost:8080/api/v1/change-sets \
 # -> {"version": 2, ...}
 
 # Every other office still resolves 30/45. Promote the canary to the whole client:
-curl -X POST -H 'X-API-Key: demo-operator-key' \
+curl -X POST -H 'Authorization: Bearer \' \
   'http://localhost:8080/api/v1/change-sets/2/promote?removeSourceOverrides=true&author=operator-1'
 # -> new version with CLIENT-level overrides; every office now inherits 25
 ```
@@ -330,9 +368,9 @@ Rolling back uses the same forward-only model.
 ### Sync clients
 
 ```bash
-curl -H 'X-API-Key: demo-employee-key' http://localhost:8080/api/v1/config/version
-curl -H 'X-API-Key: demo-employee-key' 'http://localhost:8080/api/v1/config/sync?since=1'
-curl -H 'X-API-Key: demo-employee-key' http://localhost:8080/api/v1/config/snapshot
+curl -H 'Authorization: Bearer \' http://localhost:8080/api/v1/config/version
+curl -H 'Authorization: Bearer \' 'http://localhost:8080/api/v1/config/sync?since=1'
+curl -H 'Authorization: Bearer \' http://localhost:8080/api/v1/config/snapshot
 ```
 
 Snapshot and delta payloads are filtered to the caller's tenant.
@@ -341,17 +379,17 @@ Snapshot and delta payloads are filtered to the caller's tenant.
 
 ```bash
 # Admin-only: audit history spans tenants
-curl -H 'X-API-Key: demo-admin-key' http://localhost:8080/api/v1/change-sets
-curl -H 'X-API-Key: demo-admin-key' http://localhost:8080/api/v1/change-sets/2
+curl -H 'Authorization: Bearer \' http://localhost:8080/api/v1/change-sets
+curl -H 'Authorization: Bearer \' http://localhost:8080/api/v1/change-sets/2
 
 # Look before you leap
 curl -X POST http://localhost:8080/api/v1/rollbacks \
-  -H 'X-API-Key: demo-operator-key' -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer \' -H 'Content-Type: application/json' \
   -d '{"targetVersion": 1, "author": "operator-1", "reason": "Bad window", "dryRun": true}'
 
 # Publish the rollback as a new version
 curl -X POST http://localhost:8080/api/v1/rollbacks \
-  -H 'X-API-Key: demo-operator-key' -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer \' -H 'Content-Type: application/json' \
   -d '{"targetVersion": 1, "author": "operator-1", "reason": "Bad window", "dryRun": false}'
 ```
 
@@ -373,7 +411,7 @@ Auth failures use the same shape with `UNAUTHENTICATED` (401), `FORBIDDEN` (403)
 
 ### WebSocket protocol
 
-The upgrade carries `X-API-Key`; the session is bound to that tenant.
+The upgrade carries `Authorization: Bearer <token>` (browsers may use `?token=`); the session is bound to that tenant.
 
 | Direction | Frame |
 | --- | --- |
@@ -549,7 +587,7 @@ config-server/src/main/java/com/moveinsync/config/
 ├── repository/     Spring Data JPA interfaces
 ├── domain/         entities and immutable value objects
 ├── snapshot/       immutable ConfigSnapshot + atomic SnapshotStore
-├── security/       API keys, roles, tenant guard, WebSocket handshake auth
+├── security/       JWT issue/verify, login, revocation, roles, tenant guard, WS auth
 ├── ws/             WebSocket handler, publisher, configuration
 ├── dto/            request/response records
 ├── exception/      ApiException, ValidationException, global handler
@@ -574,6 +612,7 @@ scripts/kill-server-test.ps1        automated crash/restart proof
 ```
 
 See [`docs/demo.md`](docs/demo.md) for the interview walkthrough,
+[`docs/jwt.md`](docs/jwt.md) for the authentication design,
 [`docs/design.md`](docs/design.md) for the architecture and sequence diagrams,
 [`docs/sdk.md`](docs/sdk.md) for the SDK lifecycle, and
 [`docs/benchmarks.md`](docs/benchmarks.md) for methodology and raw output.

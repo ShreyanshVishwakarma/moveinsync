@@ -5,8 +5,7 @@ import com.moveinsync.config.dto.ErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.security.access.AccessDeniedException;
+import org.springframework.http.MediaType;import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -16,14 +15,16 @@ import java.io.IOException;
 
 /**
  * Turns Spring Security's 401/403 into the same JSON envelope the rest of the API uses,
- * so clients never have to special-case auth failures.
+ * so clients never have to special-case auth failures. A token problem says whether the
+ * caller should log in again ({@code TOKEN_EXPIRED}) or fix its request
+ * ({@code TOKEN_INVALID}).
  */
 @Component
 public class AuthErrorHandlers implements AuthenticationEntryPoint, AccessDeniedHandler {
 
-    private final ObjectMapper objectMapper;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
-    public AuthErrorHandlers(ObjectMapper objectMapper) {
+    public AuthErrorHandlers(com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
     }
 
@@ -32,15 +33,15 @@ public class AuthErrorHandlers implements AuthenticationEntryPoint, AccessDenied
                          HttpServletResponse response,
                          AuthenticationException authException) throws IOException {
         write(response, request, HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED",
-                "A valid API key is required");
+                "A valid access token is required");
     }
 
     @Override
     public void handle(HttpServletRequest request,
                        HttpServletResponse response,
                        AccessDeniedException accessDeniedException) throws IOException {
-        write(response, request, HttpStatus.FORBIDDEN, "FORBIDDEN",
-                "This API key is not allowed to perform that action");
+        write(response, request, HttpStatus.FORBIDDEN, "ROLE_FORBIDDEN",
+                "This role is not allowed to perform that action");
     }
 
     private void write(HttpServletResponse response,

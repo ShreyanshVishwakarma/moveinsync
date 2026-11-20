@@ -273,6 +273,36 @@ code { font-family: var(--mono); font-size: .92em; }
 .activity-body { display: flex; flex-direction: column; }
 .activity time { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 
+/* ── login ─────────────────────────────────────────────── */
+.login-shell {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 40px 20px;
+}
+.login-card { width: min(460px, 100%); display: grid; gap: 14px; padding: 26px 26px 22px; }
+.login-brand { margin-bottom: 6px; }
+.login-brand .brand-mark {
+  background: linear-gradient(135deg, #1d4ed8, #3b82f6);
+  color: #fff; width: 42px; height: 42px; border-radius: 12px;
+}
+.login-brand h1 { margin: 0; font-size: 20px; }
+.login-brand p { margin: 0; font-size: 13px; color: var(--muted); }
+.login-card .button.wide { width: 100%; padding: 11px 16px; margin-top: 4px; }
+
+.demo-users { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 4px; }
+.demo-users p { margin: 0 0 8px; }
+.demo-user-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.demo-user {
+  text-align: left; padding: 9px 11px; border-radius: 9px;
+  border: 1px solid var(--line); background: #fff; cursor: pointer; font: inherit;
+  display: grid; gap: 2px;
+}
+.demo-user strong { font-size: 13px; }
+.demo-user span { font-size: 11.5px; color: var(--muted); }
+.demo-user:hover { border-color: #c7d7f5; background: var(--accent-soft); }
+.demo-user.active { border-color: var(--accent); background: var(--accent-soft); }
+
 /* ── banner + footer ───────────────────────────────────── */
 .banner {
   margin: 14px 24px 0; padding: 11px 16px; border-radius: 10px;

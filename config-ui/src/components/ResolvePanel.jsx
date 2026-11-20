@@ -9,7 +9,7 @@ const LEVEL_COLORS = {
 }
 
 export default function ResolvePanel({
-  apiKey,
+  token,
   definitions,
   tenants,
   offices,
@@ -20,7 +20,8 @@ export default function ResolvePanel({
   onTenantChange,
   onOfficeChange,
   onShiftChange,
-  onResult
+  onResult,
+  onSessionError
 }) {
   const [key, setKey] = useState('')
   const [result, setResult] = useState(null)
@@ -42,7 +43,7 @@ export default function ResolvePanel({
     setError(null)
     try {
       if (mode === 'explain') {
-        const explained = await api.explain(apiKey, context)
+        const explained = await api.explain(token, context)
         setTrace(explained)
         setResult({
           key: explained.key,
@@ -51,7 +52,7 @@ export default function ResolvePanel({
           sourceEntityId: explained.trace.find((step) => step.applied)?.entityId
         })
       } else {
-        const resolved = await api.resolve(apiKey, context)
+        const resolved = await api.resolve(token, context)
         setResult(resolved)
         setTrace(null)
       }
@@ -60,6 +61,7 @@ export default function ResolvePanel({
       setResult(null)
       setTrace(null)
       setError(err)
+      if (onSessionError?.(err)) return
     } finally {
       setBusy(false)
     }
@@ -141,7 +143,7 @@ export default function ResolvePanel({
       {error && (
         <div className="inline-error">
           <strong>{error.status} {error.code}</strong>
-          <span>{error.message}</span>
+          <span>{error.details?.length ? error.details.join(' · ') : error.message}</span>
         </div>
       )}
 
